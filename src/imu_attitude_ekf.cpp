@@ -57,7 +57,7 @@ namespace VCTR
                 update = true;
             }
 
-            if (accSubr_.isDataNew() && (accInitialised_ || lastGyroData_.data.val.magnitude() < 0.1 && gyroInitialised_)) // We can only initialise the acc if we are not moving. We can assume this to be the case if the gyro is not moving.
+            if (accSubr_.isDataNew() && (accInitialised_ || (lastGyroData_.data.val.magnitude() < 0.1 && gyroInitialised_))) // We can only initialise the acc if we are not moving. We can assume this to be the case if the gyro is not moving.
             {
                 if (!accInitialised_)
                 {
@@ -264,7 +264,7 @@ namespace VCTR
 
             VCTR::Math::Quat<float> quat = x_.block<4, 1>(3, 0);
             auto quatMat = quat.operator VCTR::Math::Matrix<float, 3U, 3U>(); // Convert to matrix for rotation
-            VCTR::Math::Quat<float> quatConj = quat.conjugate();
+            //VCTR::Math::Quat<float> quatConj = quat.conjugate();
 
             // Transform mag from sensor to reference frame and project onto horizontal plane while normalizing, then rotate to body frame
             auto mag = quatMat * magTransform_ * (magData.data.val - magBias_);                  // Rotate to reference frame
