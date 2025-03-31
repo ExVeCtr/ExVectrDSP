@@ -3,6 +3,8 @@
 
 #include "ExVectrMath.hpp"
 
+#include "ExVectrSensor/gnss.hpp"
+
 #include "ExVectrDSP/value_covariance.hpp"
 
 #include "ExVectrDSP/imu_gps_position_kf.hpp"
@@ -10,7 +12,7 @@
 namespace VCTR
 {
 
-    namespace Data
+    namespace DSP
     {
 
         IMUGPSPositionKalman::IMUGPSPositionKalman()
@@ -38,7 +40,7 @@ namespace VCTR
             seaLevelPressure_ = seaLevelPressure;
         }
 
-        void IMUGPSPositionKalman::setGNSSInput(Core::Topic<Core::Timestamped<Data::GNSSData>> &gnssTopic, Math::Vector<double, 3> refPos)
+        void IMUGPSPositionKalman::setGNSSInput(Core::Topic<Core::Timestamped<SNSR::GNSSData>> &gnssTopic, Math::Vector<double, 3> refPos)
         {
             gnssSubr_.subscribe(gnssTopic);
             gnssRefPos_ = refPos;
@@ -138,7 +140,7 @@ namespace VCTR
         }
 
 
-        void IMUGPSPositionKalman::updateAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>> &accData)
+        void IMUGPSPositionKalman::updateAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
         {
 
             // Transform acceleration from sensor to body to reference.
@@ -177,7 +179,7 @@ namespace VCTR
 
         }
 
-        void IMUGPSPositionKalman::updateBaro(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 1U>>& baroData)
+        void IMUGPSPositionKalman::updateBaro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& baroData)
         {
 
             float dt = double(baroData.timestamp - lastBaroData_.timestamp)/Core::SECONDS;
@@ -218,7 +220,7 @@ namespace VCTR
 
         }
 
-        void IMUGPSPositionKalman::updateGNSS(const VCTR::Core::Timestamped<VCTR::Data::GNSSData>& gnssData)
+        void IMUGPSPositionKalman::updateGNSS(const VCTR::Core::Timestamped<VCTR::SNSR::GNSSData>& gnssData)
         {
 
             //if (gnssData.data.positionCov.magnitude() > 20 || gnssData.data.velocityCov.magnitude() > 5) return;
@@ -257,7 +259,7 @@ namespace VCTR
 
         }
 
-        void IMUGPSPositionKalman::initialiseAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>> &accData)
+        void IMUGPSPositionKalman::initialiseAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
         {
 
             //Math::Quat<float> quat = x_.block<4, 1>(3, 0);
@@ -270,13 +272,13 @@ namespace VCTR
 
         }
 
-        void IMUGPSPositionKalman::initialiseBaro(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 1U>>& baroData)
+        void IMUGPSPositionKalman::initialiseBaro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& baroData)
         {
             x_(5) = calcAltitudeFromPressure(baroData.data.val(0), seaLevelPressure_) - gnssRefPos_(2);
             lastBaroData_ = baroData;
         }
 
-        void IMUGPSPositionKalman::initialiseGNSS(const VCTR::Core::Timestamped<VCTR::Data::GNSSData>& gnssData)
+        void IMUGPSPositionKalman::initialiseGNSS(const VCTR::Core::Timestamped<VCTR::SNSR::GNSSData>& gnssData)
         {
             gnssRefPos_ = gnssData.data.position;
             seaLevelPressure_ = calcSealevelPressFromAltitude(lastBaroData_.data.val(0), x_(5) + gnssRefPos_(2));

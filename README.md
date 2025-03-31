@@ -4,6 +4,7 @@ ExVectrDSP offers data structures used by many systems and many types of data pr
 ## Dependencies:
 The ExVectr libraries below are required by this library to function.
 - Core 
+- Sensor
 ## Current goal roadmap:
 - [X] ~~Port from previous projects.~~ Not much to port. Added low and high pass filters.
 - [X] Implement kalman filter.

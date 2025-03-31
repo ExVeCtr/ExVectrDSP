@@ -10,7 +10,7 @@
 namespace VCTR
 {
 
-    namespace Data
+    namespace DSP
     {
 
         MagnetometerCalibrator::MagnetometerCalibrator()

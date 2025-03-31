@@ -10,7 +10,7 @@
 namespace VCTR
 {
 
-    namespace Data
+    namespace DSP
     {
 
         IMUAttitudeEKF::IMUAttitudeEKF()
@@ -118,7 +118,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::updateGyro(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>> &gyroData)
+        void IMUAttitudeEKF::updateGyro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &gyroData)
         {
 
             float dTime = static_cast<float>(gyroData.timestamp - gyroUpdateTimestamp_) / VCTR::Core::SECONDS;
@@ -192,7 +192,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::updateAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>> &accData)
+        void IMUAttitudeEKF::updateAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
         {
 
             Math::Quat<float> quat = x_.block<4, 1>(3, 0);
@@ -259,7 +259,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::updateMag(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>> &magData)
+        void IMUAttitudeEKF::updateMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData)
         {
 
             VCTR::Math::Quat<float> quat = x_.block<4, 1>(3, 0);
@@ -358,7 +358,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::initialiseAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>> &accData)
+        void IMUAttitudeEKF::initialiseAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
         {
 
             Math::Quat<float> quat = x_.block<4, 1>(3, 0);
@@ -389,7 +389,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::initialiseMag(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>> &magData)
+        void IMUAttitudeEKF::initialiseMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData)
         {
 
             Math::Quat<float> quat = x_.block<4, 1>(3, 0);

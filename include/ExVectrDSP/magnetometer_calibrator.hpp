@@ -15,7 +15,7 @@
 namespace VCTR
 {
 
-    namespace Data
+    namespace DSP
     {
 
         /**

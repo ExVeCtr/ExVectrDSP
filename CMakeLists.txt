@@ -9,4 +9,5 @@ function(addExVectrDependency libName)
     target_include_directories(${PROJECT_NAME} PUBLIC ../${libName}/include/)
 endfunction()
 
-addExVectrDependency(ExVectrCore) #These are used to add a ExVectr dependency to a exvectr library
+addExVectrDependency(ExVectrCore)
+addExVectrDependency(ExVectrSensor)

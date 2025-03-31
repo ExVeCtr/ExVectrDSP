@@ -4,7 +4,13 @@
 
 
 namespace VCTR
-{} // namespace VCTR The ExVeCtr Library
+{
+    namespace DSP
+    {
+        
+    } // namespace DSP
+    
+} // namespace VCTR The ExVeCtr Library
 
 
 

@@ -10,13 +10,15 @@
 
 #include "ExVectrMath.hpp"
 
+#include "ExVectrSensor/gnss.hpp"
+
 #include "value_covariance.hpp"
 #include "gnss_data.hpp"
 
 namespace VCTR
 {
 
-    namespace Data
+    namespace DSP
     {
 
         /**
@@ -39,7 +41,7 @@ namespace VCTR
             //Core::Simple_Subscriber<Core::Timestamped<ValueCov<float, 3>>> accSubr_;
             Core::Buffer_Subscriber<Core::Timestamped<ValueCov<float, 3>>, 5> accSubr_;
             Core::Simple_Subscriber<Core::Timestamped<ValueCov<float, 1>>> baroSubr_;
-            Core::Simple_Subscriber<Core::Timestamped<Data::GNSSData>> gnssSubr_;
+            Core::Simple_Subscriber<Core::Timestamped<SNSR::GNSSData>> gnssSubr_;
 
             Core::Timestamped<ValueCov<float, 3>> lastAccData_;
             Core::Timestamped<ValueCov<float, 1>> lastBaroData_;
@@ -100,7 +102,7 @@ namespace VCTR
              * @param gnssTopic Topic for barometer input.
              * @param refPos Reference position for the GNSS data in form [Latitude, Longitude, Altitude]. If not given, the first GNSS data is used as the reference position.
              */
-            void setGNSSInput(Core::Topic<Core::Timestamped<Data::GNSSData>> &gnssTopic, Math::Vector<double, 3> refPos = 0);
+            void setGNSSInput(Core::Topic<Core::Timestamped<SNSR::GNSSData>> &gnssTopic, Math::Vector<double, 3> refPos = 0);
 
             /**
              * @brief Sets the reference position for the GNSS data. This is used to calculate the relative position from the GNSS data.
@@ -117,43 +119,43 @@ namespace VCTR
              * @brief Updates the current attitude estimation.
              * @param attitudeData 
              */
-            void updateAttitude(const Core::Timestamped<VCTR::Data::ValueCov<float, 7>> & attitudeData);
+            void updateAttitude(const Core::Timestamped<VCTR::DSP::ValueCov<float, 7>> & attitudeData);
 
             /**
              * @brief Updates the current attitude estimation using an obvervation of the acceleration in body frame.
              * @param accData
              */
-            void updateAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>>& accData);
+            void updateAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData);
 
             /**
              * @brief Updates the current altitude estimation (Z-Axis) using the air pressure measured.
              * @param baroData
              */
-            void updateBaro(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 1U>>& baroData); 
+            void updateBaro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& baroData); 
 
             /**
              * @brief Updates the current position estimation using the GNSS data.
              * @param gnssData
              */
-            void updateGNSS(const VCTR::Core::Timestamped<VCTR::Data::GNSSData>& gnssData);
+            void updateGNSS(const VCTR::Core::Timestamped<VCTR::SNSR::GNSSData>& gnssData);
 
             /**
              * @brief Initialises the state estimation using an obvervation of the acceleration in body frame.
              * @param accData
              */
-            void initialiseAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>>& accData);
+            void initialiseAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData);
 
             /**
              * @brief Initialises the state estimation using an obvervation of the air pressure.
              * @param baroData
              */
-            void initialiseBaro(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 1U>>& baroData);
+            void initialiseBaro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& baroData);
 
             /**
              * @brief Initialises the state estimation using an obvervation of the GNSS data. If otherwise not given, the first GNSS data is used as the reference position (Zero point).
              * @param gnssData
              */
-            void initialiseGNSS(const VCTR::Core::Timestamped<VCTR::Data::GNSSData>& gnssData);
+            void initialiseGNSS(const VCTR::Core::Timestamped<VCTR::SNSR::GNSSData>& gnssData);
 
             /**
              * Sets the expected process noise covariance for the model prediction.

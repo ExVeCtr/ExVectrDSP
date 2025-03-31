@@ -11,7 +11,7 @@
 namespace VCTR
 {
 
-    namespace Data
+    namespace DSP
     {
 
         template<typename TYPE>

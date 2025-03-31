@@ -15,7 +15,7 @@
 namespace VCTR
 {
 
-    namespace Data
+    namespace DSP
     {
 
         /**
@@ -105,31 +105,31 @@ namespace VCTR
              * @brief Updates the current attitude estimation using an obvervation of the angular velocity in body frame.
              * @param gyroData 
              */
-            void updateGyro(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>>& gyroData);
+            void updateGyro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& gyroData);
 
             /**
              * @brief Updates the current attitude estimation using an obvervation of the acceleration in body frame.
              * @param accData
              */
-            void updateAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>>& accData);
+            void updateAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData);
 
             /**
              * @brief Updates the current attitude estimation using an obvervation of the magnetic field in body frame.
              * @param magData
              */
-            void updateMag(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>>& magData);
+            void updateMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& magData);
 
             /**
              * @brief Initialises the state estimation using an obvervation of the acceleration in body frame.
              * @param accData
              */
-            void initialiseAcc(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>>& accData);
+            void initialiseAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData);
 
             /**
              * @brief Initialises the state estimation using an obvervation of the magnetic field in body frame.
              * @param magData
              */
-            void initialiseMag(const VCTR::Core::Timestamped<VCTR::Data::ValueCov<float, 3U>>& magData);
+            void initialiseMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& magData);
 
             /**
              * Sets the expected process noise covariance for the model prediction.
