@@ -57,7 +57,7 @@ namespace VCTR
                 update = true;
             }
 
-            if (accSubr_.isDataNew() && (accInitialised_ || lastGyroData_.data.val.magnitude() < 0.1 && gyroInitialised_)) // We can only initialise the acc if we are not moving. We can assume this to be the case if the gyro is not moving.
+            if (accSubr_.isDataNew() && (accInitialised_ || (lastGyroData_.data.val.magnitude() < 0.1 && gyroInitialised_))) // We can only initialise the acc if we are not moving. We can assume this to be the case if the gyro is not moving.
             {
                 if (!accInitialised_)
                 {
