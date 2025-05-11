@@ -1,5 +1,5 @@
-#ifndef ExVectrDSP_IMUATTITUDEEKF_H
-#define ExVectrDSP_IMUATTITUDEEKF_H
+#ifndef ExVectrDSP_IMUATTITUDECF_H
+#define ExVectrDSP_IMUATTITUDECF_H
 
 #include "ExVectrCore/task_types.hpp"
 
@@ -19,10 +19,10 @@ namespace VCTR
     {
 
         /**
-         * @brief A class implementing a quaternion based EKF to estimate an rotation from world to body or aka attitude from IMU data.
+         * @brief A class implementing a quaternion based complementary filter to estimate an rotation from world to body or aka attitude from IMU data.
          * @note The internal state vector is formed as: [B, Q], where B is the gyro bias in sensor frame and Q is a unit quaternion rotation from the reference frame to body frame.
          */
-        class IMUAttitudeEKF
+        class IMUAttitudeCF
         {
         protected:
             /// @brief Timestamp of state estimation.
@@ -42,8 +42,6 @@ namespace VCTR
             bool accInitialised_ = false;
             bool magInitialised_ = false;
 
-            bool zeroingMode_ = false;
-
             Core::Timestamped<ValueCov<float, 3>> lastGyroData_;
             Core::Timestamped<ValueCov<float, 3>> lastAccData_;
             Core::Timestamped<ValueCov<float, 3>> lastMagData_;
@@ -54,13 +52,11 @@ namespace VCTR
             /// @brief The topic to which the attitude estimations are published. Formed as: [W, Q], where W is the angular velocity in body frame and Q is a unit quaternion rotation from the reference frame to body frame.
             Core::Topic<Core::Timestamped<Math::Vector<float, 7>>> attitudeTopic_;
 
-            Math::Matrix<float, 3, 3> accTiltCompensation_ = Math::Matrix<float, 3, 3>::eye(); // Compensation matrix for the accelerometer tilt. This is used to correct the accelerometer data to be in the body frame.
-
         public:
             /**
              * @brief Standard constructor. Sets state to 0 and covariance to 1000 as starting values.
              */
-            IMUAttitudeEKF();
+            IMUAttitudeCF();
 
             /**
              * @brief Predicts system state upto given time.
@@ -92,18 +88,6 @@ namespace VCTR
              * @param magBias Bias of magnetometer.
              */
             void setMagInput(Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &magTopic);
-
-            /**
-             * @brief Sets the tilt compensation matrix for the accelerometer.
-             * @note The tilt compensation matrix is used to correct the accelerometer data to be in the body frame.
-             * @param accTiltCompensation Compensation matrix for the accelerometer tilt.
-             */
-            void setAccTiltCompensation(const Math::Matrix<float, 3, 3>& accTiltCompensation) { accTiltCompensation_ = accTiltCompensation; }
-
-            /**
-             * @brief Assumes no movement and estimates the gyro bias.
-             */
-            void enableZeroingMode(bool zeroingMode) { zeroingMode_ = zeroingMode; }
 
             /**
              * @brief Updates the current attitude estimation using any new sensor information.
@@ -186,10 +170,10 @@ namespace VCTR
          * @brief This combines the IMUAttitudeEKF with a periodic task to update the state automatically
          * @note The internal state vector is formed as: [V, Q], where V is the angular velocity vector and Q is a unit quaternion rotation from the reference frame to body frame.
          */
-        class IMUAttitudeEKFTask : public IMUAttitudeEKF, public Core::Task_Periodic {
+        class IMUAttitudeCFTask : public IMUAttitudeCF, public Core::Task_Periodic {
         public:
 
-            IMUAttitudeEKFTask(int64_t period, Core::Scheduler& scheduler = Core::getSystemScheduler());
+            IMUAttitudeCFTask(int64_t period, Core::Scheduler& scheduler = Core::getSystemScheduler());
 
             void taskCheck() override;
 

@@ -5,7 +5,7 @@
 
 #include "ExVectrDSP/value_covariance.hpp"
 
-#include "ExVectrDSP/imu_attitude_ekf.hpp"
+#include "ExVectrDSP/imu_attitude_cf.hpp"
 
 namespace VCTR
 {
@@ -13,7 +13,7 @@ namespace VCTR
     namespace DSP
     {
 
-        IMUAttitudeEKF::IMUAttitudeEKF()
+        IMUAttitudeCF::IMUAttitudeCF()
         {
             setState(ValueCov<float, 7>(0, 1));
             // q_ = 10;
@@ -22,22 +22,22 @@ namespace VCTR
             gyroUpdateTimestamp_ = VCTR::Core::NOW();
         }
 
-        void IMUAttitudeEKF::setGyroInput(Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &gyroTopic)
+        void IMUAttitudeCF::setGyroInput(Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &gyroTopic)
         {
             gyroSubr_.subscribe(gyroTopic);
         }
 
-        void IMUAttitudeEKF::setAccInput(Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &accTopic)
+        void IMUAttitudeCF::setAccInput(Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &accTopic)
         {
             accSubr_.subscribe(accTopic);
         }
 
-        void IMUAttitudeEKF::setMagInput(Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &magTopic)
+        void IMUAttitudeCF::setMagInput(Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &magTopic)
         {
             magSubr_.subscribe(magTopic);
         }
 
-        void IMUAttitudeEKF::update()
+        void IMUAttitudeCF::update()
         {
 
             bool update = false;
@@ -106,7 +106,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::predict(int64_t time)
+        void IMUAttitudeCF::predict(int64_t time)
         {
         
             auto gyro = lastGyroData_;
@@ -116,7 +116,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::updateGyro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &gyroData)
+        void IMUAttitudeCF::updateGyro(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &gyroData)
         {
 
             float dTime = static_cast<float>(gyroData.timestamp - lastGyroData_.timestamp) / VCTR::Core::SECONDS;
@@ -131,29 +131,24 @@ namespace VCTR
             auto gyro = gyroData.data.val - bias;
             auto gyroCov = gyroData.data.cov * 1000;
 
-            //estimate the bias if in zeroing mode
-            if (zeroingMode_)
-            {
-                auto gyroBias = x_.block<3, 1>(0, 0);
-                float factor = 0.1;
-                gyroBias = gyroBias * (1.0f - factor) - (gyroData.data.val) * factor; //Update the bias estimate
-            }
-
             // Non linear process model
-            x_[3][0] = quat[0][0] - dTimeHalf * (gyro[0][0] * quat[1][0] + gyro[1][0] * quat[2][0] + gyro[2][0] * quat[3][0]);
-            x_[4][0] = quat[1][0] + dTimeHalf * (gyro[0][0] * quat[0][0] - gyro[1][0] * quat[3][0] + gyro[2][0] * quat[2][0]);
-            x_[5][0] = quat[2][0] + dTimeHalf * (gyro[0][0] * quat[3][0] + gyro[1][0] * quat[0][0] - gyro[2][0] * quat[1][0]);
-            x_[6][0] = quat[3][0] - dTimeHalf * (gyro[0][0] * quat[2][0] - gyro[1][0] * quat[1][0] - gyro[2][0] * quat[0][0]);
+            //x_[3][0] = quat[0][0] - dTimeHalf * (gyro[0][0] * quat[1][0] + gyro[1][0] * quat[2][0] + gyro[2][0] * quat[3][0]);
+            //x_[4][0] = quat[1][0] + dTimeHalf * (gyro[0][0] * quat[0][0] - gyro[1][0] * quat[3][0] + gyro[2][0] * quat[2][0]);
+            ///x_[5][0] = quat[2][0] + dTimeHalf * (gyro[0][0] * quat[3][0] + gyro[1][0] * quat[0][0] - gyro[2][0] * quat[1][0]);
+            //x_[6][0] = quat[3][0] - dTimeHalf * (gyro[0][0] * quat[2][0] - gyro[1][0] * quat[1][0] - gyro[2][0] * quat[0][0]);
 
             //Simple rotation via quaternion multiplication and angle axis rotation
-            //auto axis = gyro.normalize();
-            //auto angle = axis.magnitude() * dTime;
-            //auto rotQuat = Math::Quat<float>(axis, angle);
-            //auto newQuat = rotQuat * Math::Quat_F(quat);
-            //x_[3][0] = newQuat[0][0];
-            //x_[4][0] = newQuat[1][0];
-            //x_[5][0] = newQuat[2][0];
-            //x_[6][0] = newQuat[3][0];
+            auto axis = gyro.normalize();
+            //axis.printTo(Core::printM);
+            auto angle = gyro.magnitude() * dTime;
+            //Core::printM("Angle: %.2f\n", angle * 180 / 3.14);
+            auto rotQuat = Math::Quat<float>(axis, angle);
+            //rotQuat.printTo(Core::printM);
+            auto newQuat = rotQuat * Math::Quat_F(quat);
+            x_[3][0] = newQuat[0][0];
+            x_[4][0] = newQuat[1][0];
+            x_[5][0] = newQuat[2][0];
+            x_[6][0] = newQuat[3][0];
 
             float norm = sqrtf(x_[3][0] * x_[3][0] + x_[4][0] * x_[4][0] + x_[5][0] * x_[5][0] + x_[6][0] * x_[6][0]);
             if (x_[0][0] < 0) // Normalize so the w component is always positive
@@ -208,14 +203,14 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::updateAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
+        void IMUAttitudeCF::updateAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
         {
 
             Math::Quat<float> quat = x_.block<4, 1>(3, 0);
 
             // Transform acc from sensor to body and normalize to get observed gravity vector
-            auto acc = (accTiltCompensation_ * accData.data.val).normalize();
-            auto accErrorIndex = (quat.conjugate().rotate(accTiltCompensation_ * accData.data.val) - Math::GRAVITY_3F).magnitude();
+            auto acc = (accData.data.val).normalize();
+            auto accErrorIndex = (quat.conjugate().rotate(accData.data.val) - Math::GRAVITY_3F).magnitude();
             //LOG_MSG("Acc Error Index: %.2f\n", accErrorIndex);
             auto accCov = accData.data.cov * (5000 * (accErrorIndex/10 + 1)); //Increase the covariance if the accel is far off from expected gravity vector.
 
@@ -278,11 +273,11 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::updateMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData)
+        void IMUAttitudeCF::updateMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData)
         {
 
             VCTR::Math::Quat<float> quat = x_.block<4, 1>(3, 0);
-            auto quatMat = quat.to3x3RotMat(); // Convert to matrix for rotation
+            auto quatMat = quat.operator VCTR::Math::Matrix<float, 3U, 3U>(); // Convert to matrix for rotation
             //VCTR::Math::Quat<float> quatConj = quat.conjugate();
 
             // Transform mag from sensor to reference frame and project onto horizontal plane while normalizing, then rotate to body frame
@@ -295,10 +290,8 @@ namespace VCTR
             //Core::printM("Mag: %f \n", mag.magnitude());
 
             // Check if mag measurement is within normal earth bounds. Leave if not
-            auto magnitude = mag.magnitude();
-            if (magnitude > 0.5 || magnitude < 0.01)
+            if (mag.magnitude() > 0.5 || mag.magnitude() < 0.01)
             {
-                LOG_MSG("Mag measurement out of bounds: %.2f\n", magnitude);
                 return;
             }
 
@@ -379,7 +372,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::initialiseAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
+        void IMUAttitudeCF::initialiseAcc(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData)
         {
 
             Math::Quat<float> quat = x_.block<4, 1>(3, 0);
@@ -410,7 +403,7 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::initialiseMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData)
+        void IMUAttitudeCF::initialiseMag(const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData)
         {
 
             Math::Quat<float> quat = x_.block<4, 1>(3, 0);
@@ -442,46 +435,46 @@ namespace VCTR
 
         }
 
-        void IMUAttitudeEKF::setProcessNoise(const VCTR::Math::Matrix<float, 7, 7> &noise)
+        void IMUAttitudeCF::setProcessNoise(const VCTR::Math::Matrix<float, 7, 7> &noise)
         {
             // q_ = noise;
         }
 
-        const VCTR::Math::Vector<float, 7> &IMUAttitudeEKF::getState()
+        const VCTR::Math::Vector<float, 7> &IMUAttitudeCF::getState()
         {
             return x_;
         }
 
-        const VCTR::Math::Matrix<float, 7, 7> &IMUAttitudeEKF::getCovariance()
+        const VCTR::Math::Matrix<float, 7, 7> &IMUAttitudeCF::getCovariance()
         {
             return p_;
         }
 
-        void IMUAttitudeEKF::setState(const ValueCov<float, 7> &state)
+        void IMUAttitudeCF::setState(const ValueCov<float, 7> &state)
         {
             x_ = state.val;
             p_ = state.cov;
         }
 
-        Core::Topic<Core::Timestamped<Math::Vector<float, 3>>>& IMUAttitudeEKF::getBiasEstTopic() 
+        Core::Topic<Core::Timestamped<Math::Vector<float, 3>>>& IMUAttitudeCF::getBiasEstTopic() 
         {
             return biasTopic_;
         }
 
-        Core::Topic<Core::Timestamped<Math::Vector<float, 7>>>& IMUAttitudeEKF::getAttitudeEstTopic() 
+        Core::Topic<Core::Timestamped<Math::Vector<float, 7>>>& IMUAttitudeCF::getAttitudeEstTopic() 
         {
             return attitudeTopic_;
         }
 
 
-        // ############################### IMUAttitudeEKFTask ###############################
+        // ############################### IMUAttitudeCFTask ###############################
 
-        IMUAttitudeEKFTask::IMUAttitudeEKFTask(int64_t period, Core::Scheduler &scheduler) : Task_Periodic("IMUAttitudeEKFTask", period)
+        IMUAttitudeCFTask::IMUAttitudeCFTask(int64_t period, Core::Scheduler &scheduler) : Task_Periodic("IMUAttitudeCFTask", period)
         {
             scheduler.addTask(*this);
         }
 
-        void IMUAttitudeEKFTask::taskCheck()
+        void IMUAttitudeCFTask::taskCheck()
         {
             if (gyroSubr_.isDataNew() || accSubr_.isDataNew() || magSubr_.isDataNew())
             {
@@ -489,11 +482,11 @@ namespace VCTR
             }
         }
 
-        void IMUAttitudeEKFTask::taskInit()
+        void IMUAttitudeCFTask::taskInit()
         {
         }
 
-        void IMUAttitudeEKFTask::taskThread()
+        void IMUAttitudeCFTask::taskThread()
         {
 
             //if (!gyroSubr_.isDataNew())
