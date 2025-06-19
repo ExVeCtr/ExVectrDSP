@@ -135,8 +135,9 @@ namespace VCTR
             if (zeroingMode_)
             {
                 auto gyroBias = x_.block<3, 1>(0, 0);
-                float factor = 0.1;
+                float factor = 0.8;
                 gyroBias = gyroBias * (1.0f - factor) - (gyroData.data.val) * factor; //Update the bias estimate
+                //x_.block(gyroBias, 0, 0, 0, 3, 1);
             }
 
             // Non linear process model

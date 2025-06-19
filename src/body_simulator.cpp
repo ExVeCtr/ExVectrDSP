@@ -13,8 +13,9 @@ namespace VCTR
     namespace DSP
     {
 
-        BodySimulator::BodySimulator(float mass, Math::Vector<float, 3> inertiaTensor, int64_t simulationInterval) :
-            Core::Task_Periodic("Simlation task", simulationInterval)
+        BodySimulator::BodySimulator(float mass, Math::Vector<float, 3> inertiaTensor, float tvcThrustLimit_N, float tvcAngleLimit_Rad, int64_t simulationInterval) :
+            Core::Task_Periodic("Simlation task", simulationInterval),
+            bodySim_(mass, inertiaTensor)
         {
 
             Core::getSystemScheduler().addTask(*this);
@@ -25,6 +26,8 @@ namespace VCTR
             inertiaTensor_(1, 1) = inertiaTensor(1);
             inertiaTensor_(2, 2) = inertiaTensor(2);
 
+            bodySim_.setInertiaTensor(inertiaTensor_); // Set the inertia tensor of the body simulator
+
             attitudeState_ = {0, 0, 0, 1, 0, 0, 0};
             positionState_ = {0, 0, 0, 0, 0, 0};
 
@@ -33,14 +36,16 @@ namespace VCTR
 
             tvcPosition_ = {0, 0, -0.35}; // Position of the thrust vector control in body frame
 
+            tvcAngleLimit_ = tvcAngleLimit_Rad; // Set the thrust vector control angle limit
+            tvcForceLimit_ = tvcThrustLimit_N; // Set the thrust vector control force limit
+
+
         }
 
         void BodySimulator::update() {
 
             float dTime = float(Core::NOW() - stateTimestamp_) / Core::SECONDS;
             stateTimestamp_ = Core::NOW();
-
-            float hdtsq = 0.5 * dTime * dTime;
 
             // gather force and torque from the thrust vector control input
             if (tvcSubr_.isDataNew()) {
@@ -59,70 +64,122 @@ namespace VCTR
                 //Limit the TVC force to the specified limit. We do this by checking if the vector is outside the limit and if so, we scale the vector back to the limit.
                 auto tvcMagnitude = tvcVector.magnitude();
                 if (tvcMagnitude > tvcForceLimit_) {
-                    tvcVector = tvcVector * (tvcForceLimit_ / tvcMagnitude); //Scale the vector back to the limit.
+                    tvcVector = tvcVector.normalize() * tvcForceLimit_; //Scale the vector back to the limit.
                 }
 
                 tvcInput(0) = tvcVector(0);
                 tvcInput(1) = tvcVector(1);
                 tvcInput(2) = tvcVector(2); //Update the input vector with the limited vector.
 
-                //LOG_MSG("TVC Force: %.2f %.2f %.2f\n", tvcInput(0), tvcInput(1), tvcInput(2)); // Print the force vector to the console
+                //LOG_MSG("TVC Force: %.2f %.2f %.2f |%.1f|\n", tvcVector(0), tvcVector(1), tvcVector(2), tvcVector.magnitude()); // Print the force vector to the console
+
+                totalBodyForce = 0;
+                totalBodyTorque = 0;
+
+                tvcZTorque_ = tvcInput(3)*1.5; // Get the torque around the Z axis from the thrust vector control input in body frame
 
                 auto tvcForce = calcForceFromTVC(tvcInput);
                 auto tvcTorque = -calcTorqueFromTVC(tvcInput, tvcPosition_);
 
-                totalBodyForce = tvcForce;
-                totalBodyTorque = tvcTorque;
+                if (tvcEnabled_) {
+                    totalBodyForce = totalBodyForce + tvcForce; // Add the force vector to the total force vector
+                    totalBodyTorque = totalBodyTorque + tvcTorque; // Add the torque vector to the total torque vector
+                }
+
+                tvcAngle = tvcVector.getAngleTo(Math::Vector<float, 3>({0, 0, 1})); // Get the angle of the force vector to the Z-axis
+
+                //LOG_MSG("TVC Force: %.2f %.2f %.2f |%.1f|, Angle: %.2f\n", totalBodyForce(0), totalBodyForce(1), totalBodyForce(2), totalBodyForce.magnitude(), tvcAngle/DEGREES); // Print the force vector and torque to the console
 
             }
 
+            auto attitude = bodySim_.getAttitude(); // Get the attitude from the body simulator  
+            auto angularVelocity = bodySim_.getAngularVelocity(); // Get the angular velocity from the body simulator
+            auto velocity = bodySim_.getVelocity(); // Get the velocity from the body simulator
+            auto velocityBody = attitude.rotate(velocity);
+
+            //LOG_MSG("AngVel: %.2f %.2f %.2f |%.1f|\n", angularVelocity(0)/DEGREES, angularVelocity(1)/DEGREES, angularVelocity(2)/DEGREES, angularVelocity.magnitude()/DEGREES); // Print the angular velocity to the console
+
+            bodySim_.clearForces();
+            bodySim_.addForce(-Math::GRAVITY_3F, 0, false, true);
+            bodySim_.addForce(totalBodyForce, tvcPosition_); // Add the tvc force
+            bodySim_.addTorque({0, 0, tvcZTorque_}, 0); // Add the tvc twist torque in body frame
+            
+            float angVelDragCoeff = 0.01; // Coefficient for the angular velocity drag force
+            bodySim_.setAngularVelocity(angularVelocity * (1 - angVelDragCoeff));
+
+            if (velocity(2) < -1 || true) { // We are moving down. Start simulating the pseudo drag force for the belly flop.
+
+                const float lambda = 0.0436; // drag pseudo coefficient
+                auto velMag = velocity.magnitude(); // Get the magnitude of the velocity vector
+                auto dragForce = (-velocity) * (lambda * velMag); // Calculate the drag force in body frame
+
+                dragForce = attitude.rotate(dragForce); // Rotate the drag force to the body frame
+
+                //LOG_MSG("Drag force: %.2f %.2f %.2f |%.1f|\n", dragForce(0), dragForce(1), dragForce(2), dragForce.magnitude()); // Print the drag force to the console
+
+                bodySim_.addForce(dragForce, {0.05, 0, 0}, true);
+
+                /*auto cylBodyForce = calcCylForce(velocityBody);
+                auto cylTopForce = calcTopBottomForce(velocityBody, Math::Vector_F({0, 0, 1}));
+                auto cylBottomForce = calcTopBottomForce(velocityBody, Math::Vector_F({0, 0, -1}));
+
+
+                LOG_MSG("Vel: %.2f %.2f %.2f |%.1f|\n", velocityBody(0), velocityBody(1), velocityBody(2), velocityBody.magnitude());
+                LOG_MSG("Force: %.2f %.2f %.2f |%.1f|\n", cylBottomForce(0), cylBottomForce(1), cylBottomForce(2), cylBottomForce.magnitude());
+
+                cylBodyForce = attitude.rotate(cylBodyForce);
+                cylTopForce = attitude.rotate(cylTopForce);
+                cylBottomForce = attitude.rotate(cylBottomForce);
+
+                bodySim_.addForce(cylBodyForce, {0, 0, 0}, true);
+                bodySim_.addForce(cylTopForce, {0, 0, 0.35}, false);
+                bodySim_.addForce(cylBottomForce, {0, 0, -0.35}, true);*/
+
+                /*calcFlapForces(velocityBody);
+
+                auto tlFF = attitude.rotate(flapForces_[0]);
+                auto trFF = attitude.rotate(flapForces_[1]);
+                auto blFF = attitude.rotate(flapForces_[2]);
+                auto brFF = attitude.rotate(flapForces_[3]);
+
+                bodySim_.addForce(tlFF, {0.05, 0.02, 0.35});
+                bodySim_.addForce(trFF, {-0.05, 0.02, 0.35});
+                bodySim_.addForce(blFF, {0.05, 0.02, -0.35});
+                bodySim_.addForce(brFF, {-0.05, 0.02, -0.35});
+
+                //bodySim_.addTorque({0, 0, 0.1}, 0, false);*/
+
+            }
+
+            //if (flapsEnabled_)
+                //bodySim_.addForce(dragCoeff * finVel, {0, 0, 0.4}); // Add the drag force in reference frame
+
+            //LOG_MSG("Flaps enabled: %d\n", flapsEnabled_); // Print the flaps enabled to the console
+
+            //auto totalForce = bodySim_.getNavForceSum();
+            //LOG_MSG("Force: %.2f %.2f %.2f |%.1f|\n", totalForce(0), totalForce(1), totalForce(2), totalForce.magnitude());
+
+            bodySim_.simulateForTime(dTime * Core::SECONDS); // Simulate the body simulator for the given time
+
+            positionState_ = bodySim_.getPositionState(); // Get the position state from the body simulator
+            attitudeState_ = bodySim_.getAttitudeState(); // Get the attitude state from the body simulator
 
             
             //LOG_MSG("Dtime: %.2f\n", dTime);
             if (zeroingMode_) {
                 //LOG_MSG("Zeroing mode enabled\n");
-                positionState_ = {0, 0, 0, 0, 0, 0}; // Set the position and velocity to 0
+                positionState_ = {0, 0, 0, 1, 0, 0}; // Set the position and velocity to 0
                 attitudeState_ = {0, 0, 0, 1, 0, 0, 0}; // Set the attitude to the reference frame
                 totalBodyForce = {0, 0, 0}; // Set the force to 0
                 totalBodyTorque = {0, 0, 0}; // Set the torque to 0
-                //zeroingMode_ = false; // Disable the zeroing mode
-
+                //zeroingMode_ = false; // Disable the zeroing mod
                 attitudeState_ = attitudeState_.normalize();
+
+                bodySim_.setPositionState(positionState_); // Set the position state to the body simulator
+                bodySim_.setAttitudeState(attitudeState_); // Set the attitude state to the body simulator
+
             }
 
-            //totalBodyForce = {0, 0, 9.81};
-
-            //positionState_(2) = 1;
-
-            // Calculate the position state transition and input models
-            Math::Matrix<float, 6, 6> F = {
-                1, 0, 0, 0, 0, 0,
-                0, 1, 0, 0, 0, 0,
-                0, 0, 1, 0, 0, 0,
-                dTime, 0, 0, 1, 0, 0,
-                0, dTime, 0, 0, 1, 0,
-                0, 0, dTime, 0, 0, 1
-            };
-
-            Math::Matrix<float, 6, 3> B = {
-                dTime / mass_, 0, 0,
-                0, dTime / mass_, 0,
-                0, 0, dTime / mass_,
-                hdtsq, 0, 0,
-                0, hdtsq, 0,
-                0, 0, hdtsq
-            };
-
-            // Calculate total force in reference frame from body frame
-            Math::Quat_F attQuat = attitudeState_.block<4, 1>(3, 0); // Quaternion in body frame
-            //Math::Vector<float, 3> additionalForce = {0, 1, 0}; // Additional force in body frame
-            Math::Vector<float, 3> totalBodyForceRef = attQuat.conjugate().rotate(totalBodyForce) - Math::GRAVITY_3F * mass_;// + additionalForce; // Rotate the force vector to reference frame
-            //LOG_MSG("Total body force: %.2f %.2f %.2f\n", totalBodyForceRef(0), totalBodyForceRef(1), totalBodyForceRef(2)); // Print the force vector to the console
-            // Calculate the new position state
-            positionState_ = F * positionState_ + B * totalBodyForceRef;
-            //LOG_MSG("Accel input: %.2f %.2f %.2f %.2f %.2f %.2f\n", stateAccelInput(0), stateAccelInput(1), stateAccelInput(2), stateAccelInput(3), stateAccelInput(4), stateAccelInput(5)); // Print the acceleration input to the console
-            //LOG_MSG("Position state: %.2f %.2f %.2f %.2f %.2f %.2f\n", positionState_(0), positionState_(1), positionState_(2), positionState_(3), positionState_(4), positionState_(5)); // Print the position state to the console
-            // Do a ground collision check. If the Z-Position is below 0, set it to 0 and set the velocity z axis to 0.
             if (positionState_(5) < 0) {
 
                 if (positionState_(2) < 0) // Only limit the velocity to 0 if the position is below 0. We want to be able to go back up.
@@ -135,48 +192,19 @@ namespace VCTR
                 attitudeState_(1) = 0; // Set the Y velocity to 0
                 attitudeState_(2) = 0; // Set the Z velocity to 0
 
+                bodySim_.setPositionState(positionState_); // Set the position state to the body simulator
+                bodySim_.setAttitudeState(attitudeState_); // Set the attitude state to the body simulator
+
             }
 
-            // ##### Testing purposes only #####
-            //positionState_ = {0, 0, 0, 0, 0, 0.5}; // Set the position and velocity to 0
-            //positionState_(0) = 0; // Set the X position to 0
-            //positionState_(1) = 0; // Set the Y position to 0
-            //positionState_(2) = 0; // Set the Z position to 0
-            //positionState_(3) = 0; // Set the Z position to 0
-            //positionState_(4) = 0; // Set the Z velocity to 0
-            //positionState_(5) = 0.5; // Set the Z velocity to 0
-            // Retrieve the angular velocity and quaternion from the attitude state
-            Math::Vector<float, 3> angVel = attitudeState_.block<3, 1>(0, 0); // Angular velocity in body frame
-            /*if (rand() % 100 == 0) {
-                angVel = angVel + Math::Vector<float, 3>({0, 0.01, 0}); // Add some noise to the angular velocity
-                LOG_MSG("TORQUE KICK!\n");
-            }*/
-            //Math::Quat_F attQuat = attitudeState_.block<4, 1>(3, 0); // Quaternion in body frame
-
-            // Update the attitude and angular velocity
-            attQuat = attQuat * Math::Quat_F(angVel.normalize(), angVel.magnitude() * dTime); // Update quaternion using angular velocity
-            angVel(0) += totalBodyTorque(0) / inertiaTensor_(0, 0) * dTime; // Update angular velocity using torque and inertia tensor
-            angVel(1) += totalBodyTorque(1) / inertiaTensor_(1, 1) * dTime; // Update angular velocity using torque and inertia tensor
-            angVel(2) += totalBodyTorque(2) / inertiaTensor_(2, 2) * dTime; // Update angular velocity using torque and inertia tensor
-            attQuat.normalize(); // Normalize the quaternion
-
-            //Update the attitude state
-            attitudeState_.block(angVel, 0, 0, 0, 0);
-            attitudeState_.block(attQuat, 3, 0, 0, 0); // Update the quaternion in the state vector
-
-            // ###### Testing purposes only #####
-            //attitudeState_ = {0, 0, 0, 1, 0, 0, 0};
-
-
-            //LOG_MSG("Attitude: %.2f %.2f %.2f %.2f\n", attitudeState_(3), attitudeState_(4), attitudeState_(5), attitudeState_(6));
 
         }
 
-        VCTR::Math::Vector<float, 7> &BodySimulator::getAttitudeState() {
+        const VCTR::Math::Vector<float, 7> &BodySimulator::getAttitudeState() {
             return attitudeState_;
         }
 
-        VCTR::Math::Vector<float, 6> &BodySimulator::getPositionState() {
+        const VCTR::Math::Vector<float, 6> &BodySimulator::getPositionState() {
             return positionState_;
         }
 
@@ -207,6 +235,81 @@ namespace VCTR
             posState.data = positionState_;
             attitudeTopic_.publish(attState);
             positionTopic_.publish(posState);
+        }
+
+        void BodySimulator::calcFlapForces(const Math::Vector_F& velocity) {
+
+            auto flapSettings = flapSettingsSubr_.getItem();
+
+            // Lets setup some values we will need 
+
+
+            // Lets first calculate the rotations
+            auto tlRot = Math::Quat<float>(Math::Vector_F({0, 0, 1}), -flapSettings.flapTLAngle_Rad);
+            auto trRot = Math::Quat<float>(Math::Vector_F({0, 0, 1}), flapSettings.flapTRAngle_Rad);
+            auto blRot = Math::Quat<float>(Math::Vector_F({0, 0, 1}), -flapSettings.flapBLAngle_Rad);
+            auto brRot = Math::Quat<float>(Math::Vector_F({0, 0, 1}), flapSettings.flapBRAngle_Rad);
+
+            //Now we calculate the surface normals
+            auto tlSN = tlRot.rotate(Math::Vector_F({1, 0, 0}));
+            auto trSN = trRot.rotate(Math::Vector_F({1, 0, 0}));
+            auto blSN = blRot.rotate(Math::Vector_F({1, 0, 0}));
+            auto brSN = brRot.rotate(Math::Vector_F({1, 0, 0}));
+
+            //Now we calculate the respective force magnitudes
+            const float tfArea = 2.49e-3;
+            const float bfArea = 9.12e-3;
+            const float lambda = 1.44; //Air density multiplied by flat surface drag coefficient
+
+            auto tlForce = calcFlapForce(tlSN, velocity, tfArea*lambda);
+            auto trForce = calcFlapForce(trSN, velocity, tfArea*lambda);
+            auto blForce = calcFlapForce(blSN, velocity, bfArea*lambda);
+            auto brForce = calcFlapForce(brSN, velocity, bfArea*lambda);
+
+            flapForces_[0] = tlForce;
+            flapForces_[1] = trForce;
+            flapForces_[0] = blForce;
+            flapForces_[1] = brForce;
+
+        }
+
+        Math::Vector_F BodySimulator::calcFlapForce(const Math::Vector_F& surfaceNormal, const Math::Vector_F& velocity, float basis) {
+
+            float angle = velocity.getAngleTo(surfaceNormal);
+
+            //if (angle > 90*DEGREES)
+            //    return 0;
+            auto velSurface = velocity.getProjectionOn(surfaceNormal);
+            auto velSurfaceMag = velSurface.magnitude();
+
+            return velSurface * (velSurfaceMag * 0.5 * basis);
+
+        }
+
+        Math::Vector_F BodySimulator::calcCylForce(const Math::Vector_F& velocityBody) {
+
+            const float cylSideArea = 0.12*0.5; //Side surface assuming flat
+            const float cylCoeff = 1.17;
+
+            auto velProj = velocityBody.getProjectionOn(Math::Vector_F({0, 0, 1}), true);
+
+            return velProj * (0.5 * 1.2 * cylCoeff * cylSideArea * velProj.magnitude());
+
+        }
+
+        Math::Vector_F BodySimulator::calcTopBottomForce(const Math::Vector_F& velocityBody, const Math::Vector_F& normal) {
+
+            const float cylFlatArea = 2 * M_PI * (0.12/2) * (0.12/2); //Top bottom surfaces
+            const float flatCoeff = 1.17;
+
+            auto angle = velocityBody.getAngleTo(normal);
+            if (angle > 90*DEGREES)
+                return 0;
+
+            auto velProj = velocityBody.getProjectionOn(normal, false);// * 0.7 + velocityBody*0.3;
+
+            return velProj * (0.5 * 1.2 * flatCoeff * cylFlatArea * velProj.magnitude());
+
         }
 
         Math::Vector<float, 3> BodySimulator::calcForceFromTVC(const Math::Vector<float, 4> &tvcInput) {

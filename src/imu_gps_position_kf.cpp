@@ -245,7 +245,7 @@ namespace VCTR
 
             baroAlt = baroAlt - gnssRefPos_(2); //Relative altitude.
 
-            LOG_MSG("Baro Alt: %.2f, Vel: %.2f\n", baroAlt, baroVel);
+            //LOG_MSG("Baro Alt: %.2f, Vel: %.2f\n", baroAlt, baroVel);
 
             auto baroState = VCTR::Math::Matrix<float, 2, 1>({
                 baroVel,
