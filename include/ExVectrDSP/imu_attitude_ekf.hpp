@@ -44,6 +44,8 @@ namespace VCTR
 
             bool zeroingMode_ = false;
 
+            uint16_t gyroBiasReadings_ = 0; // At startup we gather 200 gyro readings for an initial bias estimation.
+
             Core::Timestamped<ValueCov<float, 3>> lastGyroData_;
             Core::Timestamped<ValueCov<float, 3>> lastAccData_;
             Core::Timestamped<ValueCov<float, 3>> lastMagData_;

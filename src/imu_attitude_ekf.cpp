@@ -132,13 +132,27 @@ namespace VCTR
             auto gyroCov = gyroData.data.cov * 1000;
 
             //estimate the bias if in zeroing mode
-            if (zeroingMode_)
-            {
-                auto gyroBias = x_.block<3, 1>(0, 0);
-                float factor = 0.8;
-                gyroBias = gyroBias * (1.0f - factor) - (gyroData.data.val) * factor; //Update the bias estimate
-                //x_.block(gyroBias, 0, 0, 0, 3, 1);
+            if (gyroData.data.val.magnitude() < 10*DEGREES) {
+
+                if (zeroingMode_ && gyroData.data.val.magnitude() < 10*DEGREES) // If the gyro is not moving, we can estimate the bias
+                {
+                    float factor = 0.005;
+                    bias = bias * (1.0f - factor) + (gyro + bias) * factor; //Update the bias estimate
+                    x_.block(bias);
+                }
+
+                if (gyroBiasReadings_ < 500) // We gather 200 readings for an initial bias estimation
+                {
+                    float factor = 1/(1 + gyroBiasReadings_); // The factor decreases as we gather more readings, so the bias converges to the average
+                    bias = bias * (1.0f - factor) + (gyro + bias) * factor; //Update the bias estimate
+                    x_.block(bias);
+                    gyroBiasReadings_++;
+                    LOG_MSG("Gyro bias startup\n");
+                }
+
             }
+
+            //LOG_MSG("Bias: %.3f, %.3f, %.3f\n", bias(0)/DEGREES, bias(1)/DEGREES, bias(2)/DEGREES);
 
             // Non linear process model
             x_[3][0] = quat[0][0] - dTimeHalf * (gyro[0][0] * quat[1][0] + gyro[1][0] * quat[2][0] + gyro[2][0] * quat[3][0]);
@@ -216,9 +230,9 @@ namespace VCTR
 
             // Transform acc from sensor to body and normalize to get observed gravity vector
             auto acc = (accTiltCompensation_ * accData.data.val).normalize();
-            auto accErrorIndex = (quat.conjugate().rotate(accTiltCompensation_ * accData.data.val) - Math::GRAVITY_3F).magnitude();
+            //auto accErrorIndex = (quat.conjugate().rotate(accTiltCompensation_ * accData.data.val) - Math::GRAVITY_3F).magnitude();
             //LOG_MSG("Acc Error Index: %.2f\n", accErrorIndex);
-            auto accCov = accData.data.cov * (5000 * (accErrorIndex/10 + 1)); //Increase the covariance if the accel is far off from expected gravity vector.
+            auto accCov = accData.data.cov * 5000; //Increase the covariance if the accel is far off from expected gravity vector.
 
             // Gravity reference vector
             // auto g = VCTR::Math::Matrix<float, 3, 1>({0, 0, 1});
@@ -477,7 +491,7 @@ namespace VCTR
 
         // ############################### IMUAttitudeEKFTask ###############################
 
-        IMUAttitudeEKFTask::IMUAttitudeEKFTask(int64_t period, Core::Scheduler &scheduler) : Task_Periodic("IMUAttitudeEKFTask", period)
+        IMUAttitudeEKFTask::IMUAttitudeEKFTask(int64_t period, Core::Scheduler &scheduler) : Task_Periodic("IMUAttitudeEKFTask", period, 5*Core::SECONDS)
         {
             scheduler.addTask(*this);
         }
