@@ -18,17 +18,17 @@ IMUAttitudeEKF::IMUAttitudeEKF() {
 }
 
 void IMUAttitudeEKF::setGyroInput(
-    Core::Topic<Core::Timestamped<ValueCov<float, 3>>>& gyroTopic) {
+    Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &gyroTopic) {
   gyroSubr_.subscribe(gyroTopic);
 }
 
 void IMUAttitudeEKF::setAccInput(
-    Core::Topic<Core::Timestamped<ValueCov<float, 3>>>& accTopic) {
+    Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &accTopic) {
   accSubr_.subscribe(accTopic);
 }
 
 void IMUAttitudeEKF::setMagInput(
-    Core::Topic<Core::Timestamped<ValueCov<float, 3>>>& magTopic) {
+    Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &magTopic) {
   magSubr_.subscribe(magTopic);
 }
 
@@ -49,9 +49,9 @@ void IMUAttitudeEKF::update() {
   if (accSubr_.isDataNew() &&
       (accInitialised_ ||
        (lastGyroData_.data.val.magnitude() < 0.1 &&
-        gyroInitialised_)))  // We can only initialise the acc if we are not
-                             // moving. We can assume this to be the case if the
-                             // gyro is not moving.
+        gyroInitialised_))) // We can only initialise the acc if we are not
+                            // moving. We can assume this to be the case if the
+                            // gyro is not moving.
   {
     if (!accInitialised_) {
       accInitialised_ = true;
@@ -62,9 +62,8 @@ void IMUAttitudeEKF::update() {
     }
   }
 
-  if (magSubr_.isDataNew() &&
-      accInitialised_)  // We can only use the mag if the acc is already
-                        // initialised
+  if (magSubr_.isDataNew() && accInitialised_) // We can only use the mag if the
+                                               // acc is already initialised
   {
     if (!magInitialised_) {
       magInitialised_ = true;
@@ -75,7 +74,7 @@ void IMUAttitudeEKF::update() {
     }
   }
 
-  if (update) {  // Fix covariance and publish the new data.
+  if (update) { // Fix covariance and publish the new data.
 
     // Symmetrise the cov matrix for stability
     auto P = p_.block<4, 4>(3, 3);
@@ -110,7 +109,7 @@ void IMUAttitudeEKF::predict(int64_t time) {
 }
 
 void IMUAttitudeEKF::updateGyro(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& gyroData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &gyroData) {
   float dTime =
       static_cast<float>(gyroData.timestamp - lastGyroData_.timestamp) /
       VCTR::Core::SECONDS;
@@ -122,39 +121,38 @@ void IMUAttitudeEKF::updateGyro(
   auto bias = x_.block<3, 1>(0, 0);
 
   // Transform gyro from sensor to body
-  auto gyro = gyroData.data.val - bias;
-  auto gyroCov = gyroData.data.cov * 1000;
+  auto gyro = gyroData.data.val; // - bias;
+  auto gyroCov = gyroData.data.cov * 10000;
 
   // estimate the bias if in zeroing mode
   if (gyroData.data.val.magnitude() < 10 * DEGREES) {
     if (zeroingMode_ &&
         gyroData.data.val.magnitude() <
-            10 *
-                DEGREES)  // If the gyro is not moving, we can estimate the bias
+            10 * DEGREES) // If the gyro is not moving, we can estimate the bias
     {
       float factor = 0.005;
       bias = bias * (1.0f - factor) +
-             (gyro + bias) * factor;  // Update the bias estimate
+             (gyro + bias) * factor; // Update the bias estimate
       x_.block(bias);
     }
 
     if (gyroBiasReadings_ <
-        500)  // We gather 200 readings for an initial bias estimation
+        500) // We gather 200 readings for an initial bias estimation
     {
       float factor =
-          1 / (1 + gyroBiasReadings_);  // The factor decreases as we gather
-                                        // more readings, so the bias converges
-                                        // to the average
+          1 / (1 + gyroBiasReadings_); // The factor decreases as we gather
+                                       // more readings, so the bias converges
+                                       // to the average
       bias = bias * (1.0f - factor) +
-             (gyro + bias) * factor;  // Update the bias estimate
+             (gyro + bias) * factor; // Update the bias estimate
       x_.block(bias);
       gyroBiasReadings_++;
       LOG_MSG("Gyro bias startup\n");
     }
   }
 
-  // LOG_MSG("Bias: %.3f, %.3f, %.3f\n", bias(0)/DEGREES, bias(1)/DEGREES,
-  // bias(2)/DEGREES);
+  // LOG_MSG("Gyro update: %f, %f, %f\n", gyro(0) / DEGREES, gyro(1) / DEGREES,
+  //         gyro(2) / DEGREES);
 
   // Non linear process model
   x_[3][0] = quat[0][0] -
@@ -182,7 +180,7 @@ void IMUAttitudeEKF::updateGyro(
 
   float norm = sqrtf(x_[3][0] * x_[3][0] + x_[4][0] * x_[4][0] +
                      x_[5][0] * x_[5][0] + x_[6][0] * x_[6][0]);
-  if (x_[0][0] < 0)  // Normalize so the w component is always positive
+  if (x_[0][0] < 0) // Normalize so the w component is always positive
   {
     norm = -norm;
   }
@@ -235,18 +233,18 @@ void IMUAttitudeEKF::updateGyro(
 }
 
 void IMUAttitudeEKF::updateAcc(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData) {
   Math::Quat<float> quat = x_.block<4, 1>(3, 0);
 
   // Transform acc from sensor to body and normalize to get observed gravity
   // vector
   auto acc = (accTiltCompensation_ * accData.data.val).normalize();
   auto accCov =
-      accData.data.cov * 5000;  // Increase the covariance if the accel is far
+      accData.data.cov * 50000; // Increase the covariance if the accel is far
                                 // off from expected gravity vector.
-
-  // Gravity reference vector
-  // auto g = VCTR::Math::Matrix<float, 3, 1>({0, 0, 1});
+  // LOG_MSG("Acc: %f, %f, %f\n", acc(0), acc(1), acc(2));
+  //   Gravity reference vector
+  //   auto g = VCTR::Math::Matrix<float, 3, 1>({0, 0, 1});
 
   // Gravity measurement model
   auto h = Math::Matrix<float, 3, 1>(
@@ -277,7 +275,7 @@ void IMUAttitudeEKF::updateAcc(
   // Normalize quaternion and update matricies
   float norm = sqrtf(x[0][0] * x[0][0] + x[1][0] * x[1][0] + x[2][0] * x[2][0] +
                      x[3][0] * x[3][0]);
-  if (x[0][0] < 0)  // Normalize so the w component is always positive
+  if (x[0][0] < 0) // Normalize so the w component is always positive
   {
     norm = -norm;
   }
@@ -306,15 +304,15 @@ void IMUAttitudeEKF::updateAcc(
 }
 
 void IMUAttitudeEKF::updateMag(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& magData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData) {
   VCTR::Math::Quat<float> quat = x_.block<4, 1>(3, 0);
-  auto quatMat = quat.to3x3RotMat();  // Convert to matrix for rotation
+  auto quatMat = quat.to3x3RotMat(); // Convert to matrix for rotation
   // VCTR::Math::Quat<float> quatConj = quat.conjugate();
 
   // Transform mag from sensor to reference frame and project onto horizontal
   // plane while normalizing, then rotate to body frame
-  auto mag = quatMat * magData.data.val;  // Rotate to reference frame
-  auto magCov = magData.data.cov * 100;   // Rotate to body frame
+  auto mag = quatMat * magData.data.val; // Rotate to reference frame
+  auto magCov = magData.data.cov * 1000; // Rotate to body frame
   // magCov = quatMat * magCov * quatMat.transpose(); //Rotate to reference
   // frame
 
@@ -325,13 +323,13 @@ void IMUAttitudeEKF::updateMag(
   // Check if mag measurement is within normal earth bounds. Leave if not
   auto magnitude = mag.magnitude();
   if (magnitude > 0.1 || magnitude < 0.01) {
-    LOG_MSG("Mag measurement out of bounds: %.2f\n", magnitude);
+    // LOG_MSG("Mag measurement out of bounds: %.2f\n", magnitude);
     return;
   }
 
   mag[2][0] = 0;
   magCov[2][2] = 0;
-  mag = mag.normalize();  // Normalize to get observed magnetic field vector
+  mag = mag.normalize(); // Normalize to get observed magnetic field vector
 
   /// ############ below is a simpler way to fuse the mag data using
   /// complementary type like filter ############
@@ -409,13 +407,13 @@ void IMUAttitudeEKF::updateMag(
 }
 
 void IMUAttitudeEKF::initialiseAcc(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData) {
   Math::Quat<float> quat = x_.block<4, 1>(3, 0);
-
+  return;
   // Transform acc from sensor to body and normalize to get observed gravity
   // vector
   auto acc = (accData.data.val).normalize();
-  auto accCov = accData.data.cov * 100;
+  auto accCov = accData.data.cov * 1000;
 
   // Gravity reference
   auto g = Math::Matrix<float, 3, 1>({0, 0, 1});
@@ -439,7 +437,7 @@ void IMUAttitudeEKF::initialiseAcc(
 }
 
 void IMUAttitudeEKF::initialiseMag(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& magData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &magData) {
   Math::Quat<float> quat = x_.block<4, 1>(3, 0);
 
   // Transform acc from sensor to body and normalize to get observed gravity
@@ -448,9 +446,9 @@ void IMUAttitudeEKF::initialiseMag(
   // auto accCov = accRot_ * accData.data.cov * accRot_.transpose() * 100;
 
   // Project mag to horizontal plane
-  mag = quat.conjugate().rotate(mag);  // To reference frame
+  mag = quat.conjugate().rotate(mag); // To reference frame
   mag(2) = 0;
-  mag = quat.rotate(mag.normalize());  // Rotate back
+  mag = quat.rotate(mag.normalize()); // Rotate back
 
   // Rotation angle in horizontal plane
   auto rotAngle = atan2f(mag[1][0], mag[0][0]);
@@ -470,27 +468,27 @@ void IMUAttitudeEKF::initialiseMag(
 }
 
 void IMUAttitudeEKF::setProcessNoise(
-    const VCTR::Math::Matrix<float, 7, 7>& noise) {
+    const VCTR::Math::Matrix<float, 7, 7> &noise) {
   // q_ = noise;
 }
 
-const VCTR::Math::Vector<float, 7>& IMUAttitudeEKF::getState() { return x_; }
+const VCTR::Math::Vector<float, 7> &IMUAttitudeEKF::getState() { return x_; }
 
-const VCTR::Math::Matrix<float, 7, 7>& IMUAttitudeEKF::getCovariance() {
+const VCTR::Math::Matrix<float, 7, 7> &IMUAttitudeEKF::getCovariance() {
   return p_;
 }
 
-void IMUAttitudeEKF::setState(const ValueCov<float, 7>& state) {
+void IMUAttitudeEKF::setState(const ValueCov<float, 7> &state) {
   x_ = state.val;
   p_ = state.cov;
 }
 
-Core::Topic<Core::Timestamped<Math::Vector<float, 3>>>&
+Core::Topic<Core::Timestamped<Math::Vector<float, 3>>> &
 IMUAttitudeEKF::getBiasEstTopic() {
   return biasTopic_;
 }
 
-Core::Topic<Core::Timestamped<Math::Vector<float, 7>>>&
+Core::Topic<Core::Timestamped<Math::Vector<float, 7>>> &
 IMUAttitudeEKF::getAttitudeEstTopic() {
   return attitudeTopic_;
 }
@@ -499,7 +497,7 @@ IMUAttitudeEKF::getAttitudeEstTopic() {
 // ###############################
 
 IMUAttitudeEKFTask::IMUAttitudeEKFTask(int64_t period,
-                                       Core::Scheduler& scheduler)
+                                       Core::Scheduler &scheduler)
     : Task_Periodic("IMUAttitudeEKFTask", period, 5 * Core::SECONDS) {
   scheduler.addTask(*this);
 }
@@ -524,6 +522,6 @@ void IMUAttitudeEKFTask::taskThread() {
   setPaused(true);
 }
 
-}  // namespace DSP
+} // namespace DSP
 
-}  // namespace VCTR
+} // namespace VCTR

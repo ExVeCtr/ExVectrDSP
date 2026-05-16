@@ -18,24 +18,24 @@ IMUGPSPositionKalman::IMUGPSPositionKalman() {
 }
 
 void IMUGPSPositionKalman::setAttitudeInput(
-    Core::Topic<Core::Timestamped<Math::Vector<float, 7>>>& attitudeTopic) {
+    Core::Topic<Core::Timestamped<Math::Vector<float, 7>>> &attitudeTopic) {
   attSubr_.subscribe(attitudeTopic);
 }
 
 void IMUGPSPositionKalman::setAccInput(
-    Core::Topic<Core::Timestamped<ValueCov<float, 3>>>& accTopic) {
+    Core::Topic<Core::Timestamped<ValueCov<float, 3>>> &accTopic) {
   accSubr_.subscribe(accTopic);
 }
 
 void IMUGPSPositionKalman::setBaroInput(
-    Core::Topic<Core::Timestamped<ValueCov<float, 1>>>& baroTopic,
+    Core::Topic<Core::Timestamped<ValueCov<float, 1>>> &baroTopic,
     float seaLevelPressure) {
   baroSubr_.subscribe(baroTopic);
   seaLevelPressure_ = seaLevelPressure;
 }
 
 void IMUGPSPositionKalman::setRangeInput(
-    Core::Topic<Core::Timestamped<ValueCov<float, 1>>>& rangeTopic,
+    Core::Topic<Core::Timestamped<ValueCov<float, 1>>> &rangeTopic,
     float minRange, float maxRange) {
   rangeSubr_.subscribe(rangeTopic);
   rangeMin_ = minRange;
@@ -43,11 +43,12 @@ void IMUGPSPositionKalman::setRangeInput(
 }
 
 void IMUGPSPositionKalman::setGNSSInput(
-    Core::Topic<Core::Timestamped<SNSR::GNSSData>>& gnssTopic,
+    Core::Topic<VCTR::sensor::GNSSDataStamped> &gnssTopic,
     Math::Vector<double, 3> refPos) {
   gnssSubr_.subscribe(gnssTopic);
   gnssRefPos_ = refPos;
-  if (refPos.magnitude() != 0) gnssInitialised_ = true;
+  if (refPos.magnitude() != 0)
+    gnssInitialised_ = true;
 }
 
 void IMUGPSPositionKalman::update() {
@@ -64,9 +65,9 @@ void IMUGPSPositionKalman::update() {
   }
 
   if (accSubr_.size() > 0 &&
-      attInitialised_)  // We can only initialise the acc if we are not moving.
-                        // We can assume this to be the case if the gyro is not
-                        // moving.
+      attInitialised_) // We can only initialise the acc if we are not moving.
+                       // We can assume this to be the case if the gyro is not
+                       // moving.
   {
     Core::ListBuffer<float, 5> accDataX;
     Core::ListBuffer<float, 5> accDataY;
@@ -141,10 +142,10 @@ void IMUGPSPositionKalman::update() {
   if (zeroingMode_) {
     x_ = x_ * 0.95;
 
-    updateAccBias(lastGNSSData_, true);  // Assume zero motion.
+    updateAccBias(lastGNSSData_, true); // Assume zero motion.
   }
 
-  if (update) {  // publish the new data.
+  if (update) { // publish the new data.
 
     // Symmetrise the cov matrix for stability
     p_ = (p_ + p_.transpose()) / 2;
@@ -186,7 +187,7 @@ void IMUGPSPositionKalman::predict(int64_t time) {
 }
 
 void IMUGPSPositionKalman::updateAcc(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData) {
   // Transform acceleration from sensor to body to reference.
   auto sensorRotation = att_.to3x3RotMat();
   auto acc =
@@ -206,20 +207,19 @@ void IMUGPSPositionKalman::updateAcc(
       {// Control input model.
        dt, 0, 0, 0, dt, 0, 0, 0, dt, hdtq, 0, 0, 0, hdtq, 0, 0, 0, hdtq});
 
-  x_ = F * x_ + B * acc;  // Prediction using accelerometer
+  x_ = F * x_ + B * acc; // Prediction using accelerometer
   p_ = F * p_ * F.transpose() + B * accCov * B.transpose();
 
   // Update the ground distance estimate
-  auto& gx = groundDistanceEst_;
-  auto& gp = groundDistanceCov_;
+  auto &gx = groundDistanceEst_;
+  auto &gp = groundDistanceCov_;
 
   auto gF = VCTR::Math::Matrix<float, 2, 2>({1, 0, dt, 1});
 
   auto gB = VCTR::Math::Matrix<float, 2, 1>({dt, hdtq});
 
-  groundDistanceEst_ =
-      gF * gx + gB * acc(2);  // Update ground distance estimate using vertical
-                              // acceleration
+  groundDistanceEst_ = gF * gx + gB * acc(2); // Update ground distance estimate
+                                              // using vertical acceleration
   groundDistanceCov_ =
       gF * gp * gF.transpose() + gB * accCov(2, 2) * gB.transpose();
 
@@ -227,10 +227,11 @@ void IMUGPSPositionKalman::updateAcc(
 }
 
 void IMUGPSPositionKalman::updateBaro(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& baroData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>> &baroData) {
   float dt =
       double(baroData.timestamp - lastBaroData_.timestamp) / Core::SECONDS;
-  if (dt < 0.001) return;
+  if (dt < 0.001)
+    return;
 
   float baroAlt =
       calcAltitudeFromPressure(baroData.data.val(0), seaLevelPressure_);
@@ -244,12 +245,11 @@ void IMUGPSPositionKalman::updateBaro(
   if (zeroingMode_)
     gnssRefPos_(2) =
         gnssRefPos_(2) * 0.9 +
-        baroAlt *
-            0.1;  // Update the reference position with the barometer data.
+        baroAlt * 0.1; // Update the reference position with the barometer data.
 
   // Core::printM("%.3f\n", baroVel);
 
-  baroAlt = baroAlt - gnssRefPos_(2);  // Relative altitude.
+  baroAlt = baroAlt - gnssRefPos_(2); // Relative altitude.
 
   // LOG_MSG("Baro Alt: %.2f, Vel: %.2f\n", baroAlt, baroVel);
 
@@ -261,12 +261,12 @@ void IMUGPSPositionKalman::updateBaro(
   auto H =
       VCTR::Math::Matrix<float, 2, 6>({0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1});
 
-  auto y = baroState - H * x_;                     // Innovation
-  auto S = H * p_ * H.transpose() + baroStateCov;  // Innovation covariance
-  auto K = p_ * H.transpose() * S.inverse();       // Kalman gain
+  auto y = baroState - H * x_;                    // Innovation
+  auto S = H * p_ * H.transpose() + baroStateCov; // Innovation covariance
+  auto K = p_ * H.transpose() * S.inverse();      // Kalman gain
 
-  x_ = x_ + K * y;                                         // Update state
-  p_ = (VCTR::Math::Matrix<float, 6, 6>(1) - K * H) * p_;  // Update covariance
+  x_ = x_ + K * y;                                        // Update state
+  p_ = (VCTR::Math::Matrix<float, 6, 6>(1) - K * H) * p_; // Update covariance
 
   // Core::printM("%.3f %.3f %.3f %.3f\n", baroAlt, x_(5), baroVel, x_(2));
 
@@ -274,7 +274,7 @@ void IMUGPSPositionKalman::updateBaro(
 }
 
 void IMUGPSPositionKalman::updateRange(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& rangeData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>> &rangeData) {
   float rangeRaw = rangeData.data.val(0);
   // LOG_MSG("Range: %.2f m, Cov: %.2f\n", rangeRaw, rangeData.data.cov(0));
   if (rangeRaw < rangeMin_ || (rangeRaw > rangeMax_ && rangeMax_ > rangeMin_)) {
@@ -284,9 +284,10 @@ void IMUGPSPositionKalman::updateRange(
 
   float dt =
       double(rangeData.timestamp - lastRangeData_.timestamp) / Core::SECONDS;
-  if (dt < 0.001) return;
+  if (dt < 0.001)
+    return;
 
-  auto range = rangeRaw - rangeZeroPoint_;  // Relative range
+  auto range = rangeRaw - rangeZeroPoint_; // Relative range
   auto rangeVel = (rangeRaw - lastRangeData_.data.val(0)) / dt;
 
   auto rangeCov = rangeData.data.cov(0) * 1000;
@@ -295,7 +296,7 @@ void IMUGPSPositionKalman::updateRange(
   if (zeroingMode_) {
     rangeZeroPoint_ =
         rangeZeroPoint_ * 0.9 +
-        rangeRaw * 0.1;  // Update the zero point with the range data.
+        rangeRaw * 0.1; // Update the zero point with the range data.
   }
 
   auto rangeState = VCTR::Math::Matrix<float, 2, 1>({rangeVel, range});
@@ -305,36 +306,35 @@ void IMUGPSPositionKalman::updateRange(
 
   auto H = VCTR::Math::Matrix<float, 2, 2>({1, 0, 0, 1});
 
-  auto& gx = groundDistanceEst_;
-  auto& gp = groundDistanceCov_;
+  auto &gx = groundDistanceEst_;
+  auto &gp = groundDistanceCov_;
 
-  auto y = rangeState - H * gx;                     // Innovation
-  auto S = H * gp * H.transpose() + rangeStateCov;  // Innovation covariance
-  auto K = gp * H.transpose() * S.inverse();        // Kalman gain
+  auto y = rangeState - H * gx;                    // Innovation
+  auto S = H * gp * H.transpose() + rangeStateCov; // Innovation covariance
+  auto K = gp * H.transpose() * S.inverse();       // Kalman gain
 
-  groundDistanceEst_ = gx + K * y;  // Update state
+  groundDistanceEst_ = gx + K * y; // Update state
   groundDistanceCov_ =
-      (VCTR::Math::Matrix<float, 2, 2>(1) - K * H) * gp;  // Update covariance
+      (VCTR::Math::Matrix<float, 2, 2>(1) - K * H) * gp; // Update covariance
 
   if (useRangeForAltitude_) {
     // Fuse the range data into the altitude estimate similar to barometer.
     auto H =
         VCTR::Math::Matrix<float, 2, 6>({0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1});
 
-    auto y = rangeState - H * x_;                     // Innovation
-    auto S = H * p_ * H.transpose() + rangeStateCov;  // Innovation covariance
-    auto K = p_ * H.transpose() * S.inverse();        // Kalman gain
+    auto y = rangeState - H * x_;                    // Innovation
+    auto S = H * p_ * H.transpose() + rangeStateCov; // Innovation covariance
+    auto K = p_ * H.transpose() * S.inverse();       // Kalman gain
 
-    x_ = x_ + K * y;  // Update state
-    p_ =
-        (VCTR::Math::Matrix<float, 6, 6>(1) - K * H) * p_;  // Update covariance
+    x_ = x_ + K * y;                                        // Update state
+    p_ = (VCTR::Math::Matrix<float, 6, 6>(1) - K * H) * p_; // Update covariance
 
     gnssRefPos_(2) =
         gnssRefPos_(2) * 0.9 +
         (calcAltitudeFromPressure(lastBaroData_.data.val(0),
                                   seaLevelPressure_) -
          groundDistanceEst_(1)) *
-            0.1;  // Update the reference position with the barometer data.
+            0.1; // Update the reference position with the barometer data.
   }
 
   // LOG_MSG("Range [%.2f, %.2f] m, Cov: [%.2f, %.2f]\n", gx(0), gx(1), gp(0,
@@ -343,8 +343,7 @@ void IMUGPSPositionKalman::updateRange(
   lastRangeData_ = rangeData;
 }
 
-void IMUGPSPositionKalman::updateGNSS(
-    const VCTR::Core::Timestamped<VCTR::SNSR::GNSSData>& gnssData) {
+void IMUGPSPositionKalman::updateGNSS(const sensor::GNSSDataStamped &gnssData) {
   if (gnssData.data.positionCov.magnitude(true) > 20 ||
       gnssData.data.velocityCov.magnitude(true) > 5 ||
       gnssData.data.positionCov.magnitude(true) < 0.01 ||
@@ -376,18 +375,18 @@ void IMUGPSPositionKalman::updateGNSS(
   auto H = VCTR::Math::Matrix<float, 4, 6>(
       {1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0});
 
-  auto y = gnssState - H * x_;                // Innovation
-  auto S = H * p_ * H.transpose() + gnssCov;  // Innovation covariance
-  auto K = p_ * H.transpose() * S.inverse();  // Kalman gain
+  auto y = gnssState - H * x_;               // Innovation
+  auto S = H * p_ * H.transpose() + gnssCov; // Innovation covariance
+  auto K = p_ * H.transpose() * S.inverse(); // Kalman gain
 
   // K = K.forEach<float>([](auto &val)
   //                      { if (val > 0.90)  { return 0.90f; }
   //                        else { return val; } });
 
-  x_ = x_ + K * y;  // Update state
+  x_ = x_ + K * y; // Update state
   // x_(1) = gnssState(1);
   // x_(4) = gnssState(3);
-  p_ = (VCTR::Math::Matrix<float, 6, 6>(1) - K * H) * p_;  // Update covariance
+  p_ = (VCTR::Math::Matrix<float, 6, 6>(1) - K * H) * p_; // Update covariance
 
   // updateAccBias(gnssData, false); //Update the accelerometer bias estimate
   // using the GNSS data.
@@ -404,37 +403,38 @@ void IMUGPSPositionKalman::updateGNSS(
 }
 
 void IMUGPSPositionKalman::updateAccBias(
-    const VCTR::Core::Timestamped<VCTR::SNSR::GNSSData>& gnssData,
-    float assumeZero) {
+    const sensor::GNSSDataStamped &gnssData, float assumeZero) {
   float dTime =
       double(gnssData.timestamp - lastGNSSData_.timestamp) / Core::SECONDS;
 
-  if (!assumeZero && dTime < 0.001) return;
+  if (!assumeZero && dTime < 0.001)
+    return;
 
   // Calulate the acceleration in reference frame using gnss data
   auto accelGNSSWorld =
       (gnssData.data.velocity - lastGNSSData_.data.velocity) / dTime +
-      Math::GRAVITY_3F;  // Acceleration in world frame.
-  if (assumeZero) accelGNSSWorld = Math::GRAVITY_3F;
-  auto accelGNSSBody = att_.rotate(accelGNSSWorld);  // Transform to body frame
+      Math::GRAVITY_3F; // Acceleration in world frame.
+  if (assumeZero)
+    accelGNSSWorld = Math::GRAVITY_3F;
+  auto accelGNSSBody = att_.rotate(accelGNSSWorld); // Transform to body frame
 
   float factor = 0.1;
   // if (zeroingMode_) factor = 0.1;
   accelBias_ =
       accelBias_ * (1.0f - factor) - (accelGNSSBody - lastAccData_.data.val) *
-                                         factor;  // Update the bias estimate
+                                         factor; // Update the bias estimate
 
   // LOG_MSG("Acc Bias: %.3f %.3f %.3f\n", accelBias_(0), accelBias_(1),
   // accelBias_(2));
 }
 
 void IMUGPSPositionKalman::initialiseAcc(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>>& accData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 3U>> &accData) {
   lastAccData_ = accData;
 }
 
 void IMUGPSPositionKalman::initialiseBaro(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& baroData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>> &baroData) {
   auto altitude =
       calcAltitudeFromPressure(baroData.data.val(0), seaLevelPressure_);
   gnssRefPos_(2) = altitude;
@@ -443,13 +443,13 @@ void IMUGPSPositionKalman::initialiseBaro(
 }
 
 void IMUGPSPositionKalman::initialiseRange(
-    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>>& rangeData) {
+    const VCTR::Core::Timestamped<VCTR::DSP::ValueCov<float, 1U>> &rangeData) {
   rangeZeroPoint_ = rangeData.data.val(0);
   groundDistanceCov_ = rangeData.data.cov(0);
 }
 
 void IMUGPSPositionKalman::initialiseGNSS(
-    const VCTR::Core::Timestamped<VCTR::SNSR::GNSSData>& gnssData) {
+    const sensor::GNSSDataStamped &gnssData) {
   if (gnssData.data.positionCov.magnitude(true) < 0.001) {
     LOG_MSG("GNSS position covariance too low: %.3f (Bruh)\n",
             gnssData.data.positionCov(0, 0));
@@ -487,50 +487,50 @@ void IMUGPSPositionKalman::setPositionReference() {
 }
 
 void IMUGPSPositionKalman::setProcessNoise(
-    const VCTR::Math::Matrix<float, 6, 6>& noise) {
+    const VCTR::Math::Matrix<float, 6, 6> &noise) {
   // q_ = noise;
 }
 
-const VCTR::Math::Vector<float, 6>& IMUGPSPositionKalman::getState() const {
+const VCTR::Math::Vector<float, 6> &IMUGPSPositionKalman::getState() const {
   return x_;
 }
 
-const VCTR::Math::Vector<float, 2>& IMUGPSPositionKalman::getGroundDistanceEst()
-    const {
+const VCTR::Math::Vector<float, 2> &
+IMUGPSPositionKalman::getGroundDistanceEst() const {
   return groundDistanceEst_;
 }
 
-const VCTR::Math::Matrix<float, 6, 6>& IMUGPSPositionKalman::getCovariance()
-    const {
+const VCTR::Math::Matrix<float, 6, 6> &
+IMUGPSPositionKalman::getCovariance() const {
   return p_;
 }
 
-const VCTR::Math::Matrix<float, 2, 2>&
+const VCTR::Math::Matrix<float, 2, 2> &
 IMUGPSPositionKalman::getGroundDistanceCov() const {
   return groundDistanceCov_;
 }
 
-void IMUGPSPositionKalman::setState(const ValueCov<float, 6>& state) {
+void IMUGPSPositionKalman::setState(const ValueCov<float, 6> &state) {
   x_ = state.val;
   p_ = state.cov;
 }
 
-Core::Topic<Core::Timestamped<Math::Vector<float, 6>>>&
+Core::Topic<Core::Timestamped<Math::Vector<float, 6>>> &
 IMUGPSPositionKalman::getStateEstTopic() {
   return stateEstTopic_;
 }
 
-Core::Topic<Core::Timestamped<Math::Matrix<float, 6, 6>>>&
+Core::Topic<Core::Timestamped<Math::Matrix<float, 6, 6>>> &
 IMUGPSPositionKalman::getStateCovTopic() {
   return stateCovTopic_;
 }
 
-Core::Topic<Core::Timestamped<VCTR::Math::Vector<float, 2>>>&
+Core::Topic<Core::Timestamped<VCTR::Math::Vector<float, 2>>> &
 IMUGPSPositionKalman::getGroundDistanceEstTopic() {
   return groundDistanceEstTopic_;
 }
 
-Core::Topic<Core::Timestamped<VCTR::Math::Matrix<float, 2, 2>>>&
+Core::Topic<Core::Timestamped<VCTR::Math::Matrix<float, 2, 2>>> &
 IMUGPSPositionKalman::getGroundDistanceCovTopic() {
   return groundDistanceCovTopic_;
 }
@@ -546,11 +546,11 @@ float IMUGPSPositionKalman::calcSealevelPressFromAltitude(float pressure,
 }
 
 Math::Vector_F IMUGPSPositionKalman::calcRelPosFromGNSS(
-    const Math::Vector<double, 3>& gnssData,
-    const Math::Vector<double, 3>& refPos) {
+    const Math::Vector<double, 3> &gnssData,
+    const Math::Vector<double, 3> &refPos) {
   // Using data from the WGS84 ellipsoid.
-  const double a = 6371000.0;     // Semi major axis
-  const double b = 6356752.3142;  // Semi minor axis
+  const double a = 6371000.0;    // Semi major axis
+  const double b = 6356752.3142; // Semi minor axis
 
   float north = (gnssData(0) - refPos(0)) * b;
   float west = -(gnssData(1) - refPos(1)) * a * cos(gnssData(0));
@@ -563,7 +563,7 @@ Math::Vector_F IMUGPSPositionKalman::calcRelPosFromGNSS(
 // ###############################
 
 IMUGPSPositionKalmanTask::IMUGPSPositionKalmanTask(int64_t period,
-                                                   Core::Scheduler& scheduler)
+                                                   Core::Scheduler &scheduler)
     : Task_Periodic("IMUGPSPositionKalmanTask", period) {
   scheduler.addTask(*this);
 }
@@ -584,6 +584,6 @@ void IMUGPSPositionKalmanTask::taskThread() {
   setPaused(true);
 }
 
-}  // namespace DSP
+} // namespace DSP
 
-}  // namespace VCTR
+} // namespace VCTR
