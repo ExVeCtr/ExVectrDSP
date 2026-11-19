@@ -32,7 +32,7 @@ namespace VCTR
         void Calibrator_Gyroscope::initCalibration() {
             valueCounter_ = 0;
             valueSum_ = 0;
-            calibStartTime_ = Core::NOW();
+            calibStartTime_ = Core::NowNs();
             isCalibrated_ = false;
         }
 
@@ -52,17 +52,17 @@ namespace VCTR
             } 
                 
             if (calibStartTime_ == 0) {
-                calibStartTime_ = Core::NOW();
+                calibStartTime_ = Core::NowNs();
             }   
 
             valueSum_ = valueSum_ + gyroData.data.val;
             valueCounter_++;
 
-            if (Core::NOW() - calibStartTime_ > calibDuration_) {
+            if (Core::NowNs() - calibStartTime_ > calibDuration_) {
                 isCalibrated_ = true;
                 calibrationData_.data.val = valueSum_ / valueCounter_;
                 calibrationData_.data.cov = sensorToBodyMat_;
-                calibrationData_.timestamp = Core::NOW();
+                calibrationData_.timestamp = Core::NowNs();
             }
 
             //calibrationData_.timestamp = gyroData.timestamp;

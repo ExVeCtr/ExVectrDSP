@@ -41,7 +41,7 @@ namespace VCTR
              * @param value New sample.
              * @returns Filter output.
              */
-            const TYPE &update(const TYPE &value, int64_t sampleTime = VCTR::Core::NOW());
+            const TYPE &update(const TYPE &value, int64_t sampleTime = VCTR::Core::NowNs());
 
             /**
              * Updates the values with new given sample.
@@ -81,7 +81,7 @@ namespace VCTR
         }
 
         template <typename TYPE>
-        const TYPE &LowPassFilter<TYPE>::update(const TYPE &value, int64_t sampleTime = VCTR::Core::NOW())
+        const TYPE &LowPassFilter<TYPE>::update(const TYPE &value, int64_t sampleTime = VCTR::Core::NowNs())
         {
 
             float dt = (double)(sampleTime - lastSampleTime_) / VCTR::Core::SECONDS;

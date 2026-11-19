@@ -14,7 +14,7 @@ IMUGPSPositionKalman::IMUGPSPositionKalman() {
   setState(ValueCov<float, 6>(0, 1));
   // q_ = 10;
   // x_(3) = 1;
-  // gy = VCTR::Core::NOW();
+  // gy = VCTR::Core::NowNs();
 }
 
 void IMUGPSPositionKalman::setAttitudeInput(
@@ -150,11 +150,11 @@ void IMUGPSPositionKalman::update() {
     p_ = (p_ + p_.transpose()) / 2;
 
     Core::Timestamped<Math::Vector<float, 6>> estimationData;
-    estimationData.timestamp = Core::NOW();
+    estimationData.timestamp = Core::NowNs();
     estimationData.data.block(x_);
 
     Core::Timestamped<Math::Matrix<float, 6, 6>> estimationCov;
-    estimationCov.timestamp = Core::NOW();
+    estimationCov.timestamp = Core::NowNs();
     estimationCov.data.block(p_);
     // estimationData.data.cov.block(p_);
 
@@ -167,10 +167,10 @@ void IMUGPSPositionKalman::update() {
 
   if (groundUpdate) {
     Core::Timestamped<VCTR::Math::Vector<float, 2>> groundDistanceEstData;
-    groundDistanceEstData.timestamp = Core::NOW();
+    groundDistanceEstData.timestamp = Core::NowNs();
     groundDistanceEstData.data = groundDistanceEst_;
     Core::Timestamped<VCTR::Math::Matrix<float, 2, 2>> groundDistanceCovData;
-    groundDistanceCovData.timestamp = Core::NOW();
+    groundDistanceCovData.timestamp = Core::NowNs();
     groundDistanceCovData.data = groundDistanceCov_;
 
     groundDistanceEstTopic_.publish(groundDistanceEstData);

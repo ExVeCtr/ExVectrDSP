@@ -76,7 +76,7 @@ namespace VCTR
 
                 if (memoryManager_.getMemoryVersion() != memoryManager_.getManagerVersion()) {
                     setInitialised(false);
-                    setRelease(Core::NOW() + 1*Core::SECONDS);
+                    setRelease(Core::NowNs() + 1*Core::SECONDS);
                     return;
                 }
 

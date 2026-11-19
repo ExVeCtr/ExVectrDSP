@@ -13,8 +13,8 @@ IMUAttitudeCF::IMUAttitudeCF() {
   setState(ValueCov<float, 7>(0, 1));
   // q_ = 10;
   x_(3) = 1;
-  // gy = VCTR::Core::NOW();
-  gyroUpdateTimestamp_ = VCTR::Core::NOW();
+  // gy = VCTR::Core::NowNs();
+  gyroUpdateTimestamp_ = VCTR::Core::NowNs();
 }
 
 void IMUAttitudeCF::setGyroInput(
@@ -44,7 +44,7 @@ void IMUAttitudeCF::update() {
     update = true;
   }
 
-  predict(VCTR::Core::NOW());
+  predict(VCTR::Core::NowNs());
 
   if (accSubr_.isDataNew() &&
       (accInitialised_ ||
@@ -83,7 +83,7 @@ void IMUAttitudeCF::update() {
     p_.block(P, 3, 3);
 
     Core::Timestamped<Math::Vector<float, 7>> attitudeData;
-    attitudeData.timestamp = Core::NOW();
+    attitudeData.timestamp = Core::NowNs();
     attitudeData.data.block(x_, 3, 0, 3, 0);
     // attitudeData.data.cov.block(p_, 3, 3, 3, 3); //Copy the lower right part
     // from p for attitude quat into cov mat.

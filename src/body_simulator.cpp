@@ -40,8 +40,8 @@ BodySimulator::BodySimulator(float mass, Math::Vector<float, 3> inertiaTensor,
 void BodySimulator::update() {
   using namespace VCTR::Math;
 
-  float dTime = float(Core::NOW() - stateTimestamp_) / Core::SECONDS;
-  stateTimestamp_ = Core::NOW();
+  float dTime = float(Core::NowNs() - stateTimestamp_) / Core::SECONDS;
+  stateTimestamp_ = Core::NowNs();
 
   // gather force and torque from the thrust vector control input
   if (tvcSubr_.isDataNew()) {
@@ -86,15 +86,15 @@ void BodySimulator::update() {
     }
   }
 
-  if (Core::NOW() - lastWindUpdateTime_ > 1 * Core::SECONDS) {
-    lastWindUpdateTime_ = Core::NOW();
+  if (Core::NowNs() - lastWindUpdateTime_ > 1 * Core::SECONDS) {
+    lastWindUpdateTime_ = Core::NowNs();
     const float maxWindSpeed = 4.0f;
     const float minWindSpeed = 0.0f;
     const Math::Vector<float, 3> windDirection = {0, 1, 0};
     const Math::Vector<float, 3> windBias = {-1, 0, 0};
     windVelocity = windBias +
                    windDirection.normalize() *
-                       Core::randGen(maxWindSpeed - minWindSpeed, Core::NOW()) +
+                       Core::randGen(maxWindSpeed - minWindSpeed, Core::NowNs()) +
                    minWindSpeed;
   }
   // windVelocity = 0;
@@ -264,7 +264,7 @@ BodySimulator::getGroundTopic() {
 
 void BodySimulator::taskInit() {
   stateTimestamp_ =
-      Core::NOW(); // Initialize the state timestamp to the current time
+      Core::NowNs(); // Initialize the state timestamp to the current time
 }
 
 void BodySimulator::taskThread() {

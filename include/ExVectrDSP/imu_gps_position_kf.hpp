@@ -89,7 +89,7 @@ namespace VCTR
              * @brief Predicts system state upto given time.
              * @param time Defaults to current time.
              */
-            void predict(int64_t time = VCTR::Core::NOW());
+            void predict(int64_t time = VCTR::Core::NowNs());
 
             /**
              * @brief Sets the attitude input topic.
