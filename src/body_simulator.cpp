@@ -37,6 +37,13 @@ BodySimulator::BodySimulator(float mass, Math::Vector<float, 3> inertiaTensor,
   tvcForceLimit_ = tvcThrustLimit_N;
 }
 
+void BodySimulator::resetToStartPose() {
+  attitudeState_ = {0, 0, 0, 1, 0, 0, 0};
+  positionState_ = {0, 0, 0, 0, 0, 0};
+  bodySim_.setAttitudeState(attitudeState_);
+  bodySim_.setPositionState(positionState_);
+}
+
 void BodySimulator::update() {
   using namespace VCTR::Math;
 
@@ -210,14 +217,10 @@ void BodySimulator::update() {
 
   // LOG_MSG("Dtime: %.2f\n", dTime);
   if (zeroingMode_) {
-    positionState_ = {0, 0, 0, 1, 0, 0};
-    attitudeState_ = {0, 0, 0, 0, 0, 0, 1};
+    // Start pose (was pN = 1 m and a 180 deg yaw, q = (0,0,0,1): fixed to the documented zeros and identity).
+    resetToStartPose();
     totalBodyForce = {0, 0, 0};
     totalBodyTorque = {0, 0, 0};
-    attitudeState_ = attitudeState_.normalize(3, 7);
-
-    bodySim_.setPositionState(positionState_);
-    bodySim_.setAttitudeState(attitudeState_);
   } else {
     // positionState_ = {0, 0, 0, 1, 0, 1};
     // bodySim_.setPositionState(positionState_);

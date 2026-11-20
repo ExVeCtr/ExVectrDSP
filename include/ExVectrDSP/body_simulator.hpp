@@ -119,9 +119,16 @@ public:
   void update();
 
   /**
-   * @brief WHen enabled then the position and velocity are set to 0
+   * @brief While enabled the body is held at the start pose every tick (resetToStartPose()).
    */
   void enableZeroingMode(bool enable) { zeroingMode_ = enable; }
+
+  /**
+   * @brief Puts the simulated body back to the start pose: upright (q = identity), at the reference origin, all
+   * velocities zero. The same pose is held by zeroing mode, so a reset and the end of a zeroing window leave the
+   * body in the same state.
+   */
+  void resetToStartPose();
 
   void enableTVC(bool enable) {
     tvcEnabled_ = enable;
