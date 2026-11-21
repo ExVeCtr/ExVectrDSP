@@ -1,26 +1,27 @@
 #ifndef EXVECTRDSP_SIMULATOR_HPP
 #define EXVECTRDSP_SIMULATOR_HPP
 
-#include "ExVectrControl/physics_bodysim.hpp"
 #include "ExVectrControl/starship/control_attitude_flaps.hpp"
 #include "ExVectrCore/task_types.hpp"
 #include "ExVectrCore/time_definitions.hpp"
 #include "ExVectrCore/timestamped.hpp"
 #include "ExVectrCore/topic.hpp"
 #include "ExVectrCore/topic_subscribers.hpp"
+#include "ExVectrDSP/body_sim_model.hpp"
 #include "ExVectrMath.hpp"
-#include "value_covariance.hpp"
 
 namespace VCTR {
 
 namespace DSP {
 
 /**
- * @brief A class implementing a quaternion based EKF to estimate an rotation
- * from world to body or aka attitude from IMU data.
- * @note The internal state vector is formed as: [B, Q], where B is the gyro
- * bias in sensor frame and Q is a unit quaternion rotation from the reference
- * frame to body frame.
+ * @brief Simulation task: replaces the estimators in simulation mode. It feeds the TVC "actual thrust" and the true
+ * flap angles into the pure physics model `BodySimModel` (body_sim_model.hpp: geometry, aerodynamics, rigid body,
+ * all parameters in `BodySimParams`) and publishes the same topic types as the estimators.
+ *
+ * Time: the model integrates in fixed steps (`BodySimParams::step_s`, 2 ms) of the wall-clock time elapsed since
+ * the previous run, at most `maxAdvance_s` (50 ms) per run. A gap of more than 100 ms (task paused, simulation
+ * restarted) is not integrated at all: the simulation simply continues from where it stopped.
  */
 class BodySimulator : public Core::Task_Periodic {
 protected:
@@ -30,92 +31,52 @@ protected:
 
   // Where TVC input is published. In form: [X, Y, Z, T], where X, Y, Z show the
   // thrust vector in body frame (magnitude of vector is thrust magnitude) and T
-  // is the roll torque (Z-Axis) angle in radians.
+  // is the roll torque about body Z in N m.
   Core::Simple_Subscriber<Math::Vector<float, 4>> tvcSubr_;
-  Math::Vector<float, 3> tvcPosition_;
-  float tvcAngleLimit_ = 8 * 3.14 / 180; // 30 degrees in radians
-  float tvcForceLimit_ = 12;             // 1000 N
-
   Core::Simple_Subscriber<CTRL::ControlAttitudeFlapSetting> flapSettingsSubr_;
-  Math::Vector<float, 3> flapForces_[4]; // tl, tr, bl, br
 
-  /// @brief Timestamp of state estimation.
-  int64_t stateTimestamp_;
+  BodySimModel model_;
 
-  bool zeroingMode_ =
-      false; // When enabled, then the filter attempts to zero the position and
-             // velocity, the reference position is set to the current position
-             // and finally the barometer and accelerometer are calibrated
-             // assuming no motion.
+  Math::Vector<float, 3> tvcForce_;  ///< last thrust vector received, body frame, N
+  float tvcRollTorque_ = 0;          ///< last roll torque received, N m
 
-  Math::Vector<float, 7>
-      attitudeState_; // Formed as: [V, Q], where V is the angular velocity in
-                      // body frame and Q is a unit quaternion rotation from
-                      // the reference frame to body frame.
-  Math::Vector<float, 6>
-      positionState_; // Formed as: [V, P], where V is the current velocity, P
-                      // is the current position in reference frame
+  /// Timestamp of the published state (time of the last run).
+  int64_t stateTimestamp_ = 0;
 
-  CTRL::PhysicsBodySim bodySim_; // The body simulator object that simulates
-                                 // the forces and torques on the vehicle.
+  bool zeroingMode_ = false; ///< While true the body is held at the start pose every run.
+  bool tvcEnabled_ = true;   ///< Thrust and roll torque act only while true.
+  bool flapsEnabled_ = false; ///< Informational: the flap driver publishes true angles only while enabled.
 
-  Math::Vector<float, 3> totalBodyForce;  // Total force in body frame
-  Math::Vector<float, 3> totalBodyTorque; // Total torque in body frame
-
-  Math::Vector<float, 3>
-      windVelocity; // Wind velocity in reference frame. Added to the vehicle
-                    // velocity to get the air velocity.
-  int64_t lastWindUpdateTime_ = 0;
-
-  float tvcZTorque_ = 0; // The torque around the Z axis from the thrust vector
-                         // control input in body frame
-
-  float mass_ = 1.0f; // Mass of the vehicle in kg
-  Math::Matrix<float, 3, 3> inertiaTensor_ =
-      Math::Matrix<float, 3,
-                   3>::eye(); // Inertia matrix of the vehicle in kg*m^2
-
-  bool tvcEnabled_ = true; // If the actuators are enabled or not. This is set
-                           // to true when the actuators are enabled.
-  bool flapsEnabled_ = false; // If the actuators are active or not. This is
-                              // set to true when the actuators are active.
+  Math::Vector<float, 7> attitudeState_; ///< [omega(3) body rad/s, q(4) body -> world]
+  Math::Vector<float, 6> positionState_; ///< [V(3), P(3)] world NWU, m/s and m
 
 public:
+  /// Gap above which the elapsed wall-clock time is not integrated (pause, restart).
+  static constexpr int64_t kMaxGapNs = 100 * Core::MILLISECONDS;
+
   /**
-   * @brief Standard constructor. Sets state to 0 and covariance to 1000 as
-   * starting values.
+   * @param mass kg, @param inertiaTensor diagonal of the inertia tensor about the CoM, kg m^2,
+   * @param tvcThrustLimit_N, tvcAngleLimit_Rad thrust magnitude and cone limits.
+   * All other model parameters are the defaults of BodySimParams (see params()).
    */
   BodySimulator(float mass, Math::Vector<float, 3> inertiaTensor,
                 float tvcThrustLimit_N, float tvcAngleLimit_Rad,
                 int64_t simulationInterval = 0.01 * Core::SECONDS);
 
   /**
-   * @brief Subsribes to a topic to which the thrust vector control output is
-   * published. In form: [X, Y, Z, T], where X, Y, Z show the thrust vector in
-   * body frame (magnitude of vector is thrust magnitude) and T is the roll
-   * torque (Z-Axis) angle in radians.
-   * @param tvcTopic The topic to which the thrust vector control output is
-   * published.
-   * @param tvcPosition The position of the thrust vector control in body frame.
+   * @brief Subscribes to the TVC actual thrust topic [X, Y, Z, T] (body N, roll torque N m).
+   * @param tvcPosition Thrust application point in the body frame; only its z (on the axis) is used.
    */
   void setTVCInputTopic(Core::Topic<Math::Vector<float, 4>> &tvcTopic,
                         const Math::Vector<float, 3> &tvcPosition,
-                        float tvcAngleLimit, float tvcForceLimit) {
-    tvcAngleLimit_ = tvcAngleLimit;
-    tvcForceLimit_ = tvcForceLimit;
-    tvcSubr_.subscribe(tvcTopic);
-    tvcPosition_ = tvcPosition;
-  }
+                        float tvcAngleLimit, float tvcForceLimit);
 
   void setFlapSettingInputTopic(
       Core::Topic<CTRL::ControlAttitudeFlapSetting> &flapTopic) {
     flapSettingsSubr_.subscribe(flapTopic);
   }
 
-  /**
-   * @brief Updates the current attitude estimation using any new sensor
-   * information.
-   */
+  /// One simulation run: take the inputs, integrate the elapsed time, apply zeroing mode.
   void update();
 
   /**
@@ -130,102 +91,38 @@ public:
    */
   void resetToStartPose();
 
-  void enableTVC(bool enable) {
-    tvcEnabled_ = enable;
-  } // Enable or disable the thrust vector control
-
-  void enableFlaps(bool enable) {
-    flapsEnabled_ = enable;
-  } // Enable or disable the thrust vector control
+  void enableTVC(bool enable) { tvcEnabled_ = enable; }
+  void enableFlaps(bool enable) { flapsEnabled_ = enable; }
 
   /**
-   * @note Current state estimation. Formed as: [W, Q], where W is the angular
-   * velocity in body frame and Q is a unit quaternion rotation from the
-   * reference frame to body frame.
-   * @returns estimation for state.
+   * @brief Steady wind of the simulated world (simulation only; off by default).
+   * @param speed_mps horizontal speed, m/s (clamped to >= 0); @param direction_rad direction the air moves
+   * TOWARD, counterclockwise from North toward West (NWU). Non-finite values leave the setting unchanged.
    */
-  const VCTR::Math::Vector<float, 7> &getAttitudeState();
+  void setWind(float speed_mps, float direction_rad) { model_.setWind(speed_mps, direction_rad); }
+  float windSpeed() const { return model_.params().windSpeed_mps; }
+  float windDirection() const { return model_.params().windDirection_rad; }
 
-  /**
-   * @note Current state estimation. Formed as: [V, P], where V is the current
-   * velocity, P is the current position in reference frame (X-North, Y-West,
-   * Z-Up).
-   * @returns estimation for state.
-   */
-  const VCTR::Math::Vector<float, 6> &getPositionState();
+  /// Model parameters (change only while the simulation is paused; call model().applyParams() after mass,
+  /// inertia or geometry changes).
+  BodySimModel &model() { return model_; }
 
-  /**
-   * @note Current ground distance estimation. Formed as: [V, P], where V is the
-   * vertical velocity in m/s and P is the ground distance in meters.
-   */
-  const VCTR::Math::Vector<float, 2> &getGroundState();
+  const VCTR::Math::Vector<float, 7> &getAttitudeState() { return attitudeState_; }
+  const VCTR::Math::Vector<float, 6> &getPositionState() { return positionState_; }
 
-  /**
-   * @return The attitude state estimation from reference to body frame in form:
-   * [W, Q].
-   */
-  Core::Topic<Core::Timestamped<Math::Vector<float, 7>>> &getAttitudeEstTopic();
+  /// @return attitude [W, Q] (body rates, q body -> world).
+  Core::Topic<Core::Timestamped<Math::Vector<float, 7>>> &getAttitudeEstTopic() { return attitudeTopic_; }
+  /// @return [V, P] in the world frame (NWU).
+  Core::Topic<Core::Timestamped<Math::Vector<float, 6>>> &getStateEstTopic() { return positionTopic_; }
+  /// @return ground [V, P]: vertical velocity m/s, height above the ground m.
+  Core::Topic<Core::Timestamped<Math::Vector<float, 2>>> &getGroundTopic() { return groundTopic_; }
 
-  /**
-   * @return The state estimation for velocity and position in form: [V, P].
-   */
-  Core::Topic<Core::Timestamped<Math::Vector<float, 6>>> &getStateEstTopic();
-
-  /**
-   * @return The ground distance estimation in form: [V, P], where V is the
-   * vertical velocity in m/s and P is the ground distance in meters.
-   */
-  Core::Topic<Core::Timestamped<Math::Vector<float, 2>>> &getGroundTopic();
-
-  void setAttitudeState(const Math::Vector<float, 7> &attitudeState) {
-    bodySim_.setAttitudeState(attitudeState);
-  } // Set the attitude state in reference frame
-  void setPositionState(const Math::Vector<float, 6> &positionState) {
-    bodySim_.setPositionState(positionState);
-  } // Set the position state in reference frame
-
-  /**
-   * @return The attitude state estimation cov in form: [W, Q].
-   */
-  // Core::Topic<Core::Timestamped<Math::Matrix<float, 7, 7>>>&
-  // getAttitudeCovTopic();
+  void setAttitudeState(const Math::Vector<float, 7> &attitudeState) { model_.setAttitudeState(attitudeState); }
+  void setPositionState(const Math::Vector<float, 6> &positionState) { model_.setPositionState(positionState); }
 
 private:
   void taskInit() override;
-
   void taskThread() override;
-
-  void calcFlapForces(const Math::Vector_F &tlVelocity,
-                      const Math::Vector_F &trVelocity,
-                      const Math::Vector_F &blVelocity,
-                      const Math::Vector_F &brVelocity);
-  Math::Vector_F calcFlapForce(const Math::Vector_F &surfaceNormal,
-                               const Math::Vector_F &velocityBody, float basis);
-
-  Math::Vector_F calcCylForce(const Math::Vector_F &velocityBody);
-  Math::Vector_F calcTopBottomForce(const Math::Vector_F &velocityBody,
-                                    const Math::Vector_F &normal);
-
-  Math::Vector<float, 3>
-  calcForceFromTVC(const Math::Vector<float, 4> &tvcInput);
-
-  /// @brief Calculates the torque from the thrust vector control input. The
-  /// torque is calculated as a cross product of the thrust vector and the
-  /// distance from the center of gravity to the thrust vector.
-  /// @param tvcInput The thrust vector control input in form: [X, Y, Z, T],
-  /// where X, Y, Z show the thrust vector in body frame (magnitude of vector is
-  /// thrust magnitude) and T is the roll torque (Z-Axis) angle in radians.
-  /// @param tvcPosition The position of the thrust vector control in body
-  /// frame.
-  Math::Vector<float, 3>
-  calcTorqueFromTVC(const Math::Vector<float, 4> &tvcInput,
-                    const Math::Vector<float, 3> &tvcPosition);
-
-  // Calcuulates the additional air flow vector in local body frame due to
-  // rotation
-  Math::Vector<float, 3>
-  getLocalAirFlowVector(const Math::Vector<float, 3> &rotationVel,
-                        const Math::Vector<float, 3> &position);
 };
 
 } // namespace DSP
