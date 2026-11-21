@@ -28,6 +28,10 @@ namespace VCTR {
 namespace DSP {
 namespace Calib {
 
+/// Accept limit of the accelerometer offset |b_k| in m/s^2 (owner decision 2026-11-21: 2.5, was 1.5). The vehicle's
+/// stored-parameter check (Arm/MissionBegin) uses this same constant.
+constexpr double kAccelOffsetLimit = 2.5;
+
 struct AccelFitConfig {
   double gRef = 9.81;              ///< gravity reference, m/s^2 (CAL_G_REF)
   size_t minPosesFull = 9;         ///< poses for the full 9-parameter fit
@@ -38,7 +42,7 @@ struct AccelFitConfig {
   double scaleMin = 0.95;          ///< eigenvalues of A
   double scaleMax = 1.05;
   double maxOffDiag = 0.02;        ///< |A_jk|, j != k
-  double maxOffset = 1.5;          ///< |b_k|, m/s^2
+  double maxOffset = kAccelOffsetLimit; ///< |b_k|, m/s^2
   double warnOffset = 0.8;         ///< |b_k| above this: Warn (beyond the MPU9250 datasheet zero-g tolerance)
   double maxCondition = 1e4;       ///< condition number of the (normalised) normal matrix
   int maxIterations = 50;
@@ -83,8 +87,23 @@ AccelFitResult fitAccel(const double (*poses)[3], size_t n, const AccelFitConfig
 /// |A (x - b)| with the parameters of r.
 double accelCalibratedNorm(const AccelFitResult &r, const double x[3]);
 
-/// True if every sensor axis lies within cfg.coverageAngleRad of +g and of -g for at least one pose direction.
+/// Bit k set = direction k covered by at least one pose within coverageAngleRad of it. Directions in the sensor frame
+/// as the fit sees it (raw pose means): bit 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z (the axis pointing along +g
+/// reading, i.e. the axis the specific force points to). 0x3F = all covered.
+uint8_t accelCoverageMask(const double (*poses)[3], size_t n, double coverageAngleRad);
+
+/// True if every sensor axis lies within coverageAngleRad of +g and of -g for at least one pose direction
+/// (accelCoverageMask == 0x3F).
 bool accelPoseCoverage(const double (*poses)[3], size_t n, double coverageAngleRad);
+
+/// Number of covered directions (0..6) in a mask.
+int accelCoverageCount(uint8_t mask);
+
+/// Writes the missing directions of a mask as "+X, -Z" (bit order) into buf (empty string if none missing).
+void accelMissingText(uint8_t mask, char *buf, size_t bufLen);
+
+/// True when the operator can stop and fit: at least minPoses poses and all six directions covered.
+bool accelCoverageComplete(size_t nPoses, uint8_t mask, size_t minPoses);
 
 } // namespace Calib
 } // namespace DSP

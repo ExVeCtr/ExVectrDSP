@@ -83,9 +83,9 @@ void normalEquations(const double *p, size_t np, const double (*poses)[3], size_
 
 } // namespace
 
-bool accelPoseCoverage(const double (*poses)[3], size_t n, double coverageAngleRad) {
+uint8_t accelCoverageMask(const double (*poses)[3], size_t n, double coverageAngleRad) {
   const double cosLim = cos(coverageAngleRad);
-  bool seen[6] = {false, false, false, false, false, false}; // +x, -x, +y, -y, +z, -z
+  uint8_t mask = 0; // +x, -x, +y, -y, +z, -z
   for (size_t i = 0; i < n; i++) {
     const double nrm = sqrt(poses[i][0] * poses[i][0] + poses[i][1] * poses[i][1] + poses[i][2] * poses[i][2]);
     if (!(nrm > 1e-9))
@@ -93,15 +93,50 @@ bool accelPoseCoverage(const double (*poses)[3], size_t n, double coverageAngleR
     for (int k = 0; k < 3; k++) {
       const double c = poses[i][k] / nrm;
       if (c >= cosLim)
-        seen[2 * k] = true;
+        mask |= static_cast<uint8_t>(1u << (2 * k));
       if (-c >= cosLim)
-        seen[2 * k + 1] = true;
+        mask |= static_cast<uint8_t>(1u << (2 * k + 1));
     }
   }
+  return mask;
+}
+
+bool accelPoseCoverage(const double (*poses)[3], size_t n, double coverageAngleRad) {
+  return accelCoverageMask(poses, n, coverageAngleRad) == 0x3F;
+}
+
+int accelCoverageCount(uint8_t mask) {
+  int c = 0;
   for (int k = 0; k < 6; k++)
-    if (!seen[k])
-      return false;
-  return true;
+    if (mask & (1u << k))
+      c++;
+  return c;
+}
+
+void accelMissingText(uint8_t mask, char *buf, size_t bufLen) {
+  if (bufLen == 0)
+    return;
+  static const char *const names[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+  size_t pos = 0;
+  buf[0] = 0;
+  for (int k = 0; k < 6; k++) {
+    if (mask & (1u << k))
+      continue;
+    const size_t need = (pos ? 2 : 0) + 2;
+    if (pos + need + 1 > bufLen)
+      break;
+    if (pos) {
+      buf[pos++] = ',';
+      buf[pos++] = ' ';
+    }
+    buf[pos++] = names[k][0];
+    buf[pos++] = names[k][1];
+    buf[pos] = 0;
+  }
+}
+
+bool accelCoverageComplete(size_t nPoses, uint8_t mask, size_t minPoses) {
+  return nPoses >= minPoses && (mask & 0x3F) == 0x3F;
 }
 
 double accelCalibratedNorm(const AccelFitResult &r, const double x[3]) {
