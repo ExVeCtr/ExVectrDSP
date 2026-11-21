@@ -52,7 +52,7 @@ struct BodySimFlapGeometry {
  */
 struct BodySimParams {
   // ---- Mass properties (measured, double swing; owner 2026-11-21) ----
-  float mass_kg = 1.2f;   ///< Total mass incl. battery and motors (= VEHICLE_MASS_KG).
+  float mass_kg = 1.1f;   ///< Total mass incl. battery and motors (= VEHICLE_MASS_KG).
   float inertiaXX = 0.044f; ///< kg m^2 about the CoM, body X (pitch/yaw axes are X and Y).
   float inertiaYY = 0.044f; ///< kg m^2, body Y.
   float inertiaZZ = 0.004f; ///< kg m^2, body Z (long axis).
@@ -139,12 +139,12 @@ struct BodySimParams {
   /**
    * Global calibration factor on every aerodynamic force and moment. Without it (1.0) the model falls belly-down
    * at neutral flaps at 13.5 m/s; the real ship falls at 6.4 m/s (21..25 km/h, flight position filter), which
-   * needs CAL_PLACEHOLDER (an effective drag area CDA_PLACEHOLDER instead of 0.097 m^2). That is NOT a plausible
-   * coefficient for the documented 1.2 kg ship of 13 x 74 cm: it stands for an unexplained difference (mass, the
+   * needs a factor of 4.00 (an effective drag area of 0.43 m^2 instead of 0.097 m^2). That is NOT a plausible
+   * coefficient for the documented 1.1 kg ship of 13 x 74 cm: it stands for an unexplained difference (mass, the
    * speed measurement, or missing drag sources) to be resolved with the owner.
    * Because it scales all aerodynamic forces equally, it also scales stiffness, damping and flap authority.
    */
-  float aeroCalibration = 4.38f;
+  float aeroCalibration = 4.00f;
 
   // ---- Actuators ----
   /// True: the model applies the servo rate limits itself (host harness). False on the vehicle, where the flap
