@@ -15,6 +15,8 @@ void GyroBiasCollector::start(int64_t nowNs, int64_t deadlineNs) {
   deadline_ = deadlineNs;
   restarts_ = 0;
   res_ = GyroBiasResult();
+  diag_ = GyroBlockDiagnostics();
+  last_ = GyroLastBlock();
   blockStarted_ = false;
   restartWindow();
   (void)nowNs;
@@ -68,6 +70,31 @@ void GyroBiasCollector::advance(int64_t tNs) {
 
 void GyroBiasCollector::closeBlock() {
   bool ok = block_.nGyro >= 2 && block_.nAccel >= 2;
+  if (block_.nGyro >= 2 && block_.nAccel >= 2) { // diagnostics: the worst values seen in any closed block
+    diag_.blocks++;
+    double mgs = 0, mgp = 0, mas = 0;
+    for (int k = 0; k < 3; k++) {
+      if (block_.gyroStd(k) > mgs) mgs = block_.gyroStd(k);
+      if (block_.gyroP2P(k) > mgp) mgp = block_.gyroP2P(k);
+      if (block_.accelStd(k) > mas) mas = block_.accelStd(k);
+    }
+    if (mgs < diag_.minGyroStd) diag_.minGyroStd = mgs;
+    if (mgp < diag_.minGyroP2P) diag_.minGyroP2P = mgp;
+    if (mas < diag_.minAccelAxisStd) diag_.minAccelAxisStd = mas;
+    if (block_.accelNormStd() < diag_.minAccelNormStd) diag_.minAccelNormStd = block_.accelNormStd();
+    for (int k = 0; k < 3; k++) {
+      if (block_.gyroStd(k) > diag_.gyroStd)
+        diag_.gyroStd = block_.gyroStd(k);
+      if (block_.gyroP2P(k) > diag_.gyroP2P)
+        diag_.gyroP2P = block_.gyroP2P(k);
+      if (block_.accelStd(k) > diag_.accelAxisStd)
+        diag_.accelAxisStd = block_.accelStd(k);
+    }
+    if (block_.accelNormStd() > diag_.accelNormStd)
+      diag_.accelNormStd = block_.accelNormStd();
+  } else {
+    diag_.shortBlocks++;
+  }
   for (int k = 0; k < 3 && ok; k++) {
     if (!(block_.gyroStd(k) < cfg_.maxBlockStd) || !(block_.gyroP2P(k) < cfg_.maxBlockP2P))
       ok = false;
@@ -76,6 +103,18 @@ void GyroBiasCollector::closeBlock() {
   }
   if (ok && !(block_.accelNormStd() < cfg_.maxAccelNormStd))
     ok = false;
+
+  if (block_.nGyro >= 2 && block_.nAccel >= 2) {
+    last_.valid = true;
+    last_.accepted = ok;
+    last_.gyroStd = last_.gyroP2P = last_.accelAxisStd = 0;
+    for (int k = 0; k < 3; k++) {
+      if (block_.gyroStd(k) > last_.gyroStd) last_.gyroStd = block_.gyroStd(k);
+      if (block_.gyroP2P(k) > last_.gyroP2P) last_.gyroP2P = block_.gyroP2P(k);
+      if (block_.accelStd(k) > last_.accelAxisStd) last_.accelAxisStd = block_.accelStd(k);
+    }
+    last_.accelNormStd = block_.accelNormStd();
+  }
 
   if (!ok) {
     restarts_++;
@@ -145,6 +184,7 @@ void GyroBiasCollector::finish(int64_t nowNs, bool complete) {
   state_ = State::Done;
   res_ = GyroBiasResult();
   res_.restarts = restarts_;
+  res_.worst = diag_;
   if (!complete) {
     res_.result = restarts_ > 0 ? CalResult::Motion : CalResult::Timeout;
     return;

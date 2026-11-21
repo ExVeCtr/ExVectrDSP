@@ -48,6 +48,28 @@ enum GyroCheck : uint16_t {
   kGyroCheckTemp = 1u << 3,
 };
 
+/// Worst values seen in any closed 1 s block of a run (diagnostics for tuning the limits; rad/s and m/s^2).
+struct GyroBlockDiagnostics {
+  double gyroStd = 0;       ///< largest per-axis gyro std
+  double gyroP2P = 0;       ///< largest per-axis gyro peak-to-peak
+  double accelAxisStd = 0;  ///< largest per-axis accel std
+  double accelNormStd = 0;  ///< largest std of |a|
+  uint32_t shortBlocks = 0; ///< blocks with fewer than 2 gyro or accel samples
+  uint32_t blocks = 0;      ///< closed blocks with enough samples
+  // The quietest block seen (the sensor's own noise floor when the vehicle is really still).
+  double minGyroStd = 1e300;
+  double minGyroP2P = 1e300;
+  double minAccelAxisStd = 1e300;
+  double minAccelNormStd = 1e300;
+};
+
+/// The last closed 1 s block (live feedback while a run collects).
+struct GyroLastBlock {
+  bool valid = false;
+  bool accepted = false;
+  double gyroStd = 0, gyroP2P = 0, accelAxisStd = 0, accelNormStd = 0; ///< worst axis / of |a|
+};
+
 struct GyroBiasResult {
   CalResult result = CalResult::None;
   uint16_t checks = 0;
@@ -62,6 +84,7 @@ struct GyroBiasResult {
   uint32_t nMag = 0;
   uint32_t restarts = 0;
   uint32_t nGyro = 0;
+  GyroBlockDiagnostics worst; ///< over all blocks of the run, accepted or not
 };
 
 class GyroBiasCollector {
@@ -85,6 +108,7 @@ public:
   State state() const { return state_; }
   bool collecting() const { return state_ == State::Collecting; }
   const GyroBiasResult &result() const { return res_; }
+  const GyroLastBlock &lastBlock() const { return last_; }
   /// Fraction (0..1) of the window collected so far.
   double progress() const;
   uint32_t restarts() const { return restarts_; }
@@ -111,6 +135,8 @@ private:
   int64_t windowCollectedNs_ = 0;
   uint32_t restarts_ = 0;
   GyroBiasResult res_;
+  GyroBlockDiagnostics diag_;
+  GyroLastBlock last_;
 };
 
 } // namespace Calib
