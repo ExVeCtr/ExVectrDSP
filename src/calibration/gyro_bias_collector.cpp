@@ -1,0 +1,203 @@
+#include "ExVectrDSP/calibration/gyro_bias_collector.hpp"
+
+#include <math.h>
+
+namespace VCTR {
+namespace DSP {
+namespace Calib {
+
+namespace {
+const double kZero[3] = {0, 0, 0};
+}
+
+void GyroBiasCollector::start(int64_t nowNs, int64_t deadlineNs) {
+  state_ = State::Collecting;
+  deadline_ = deadlineNs;
+  restarts_ = 0;
+  res_ = GyroBiasResult();
+  blockStarted_ = false;
+  restartWindow();
+  (void)nowNs;
+}
+
+void GyroBiasCollector::restartWindow() {
+  block_.clear();
+  window_.clear();
+  for (int k = 0; k < 3; k++)
+    blockMagSum_[k] = winMagSum_[k] = 0;
+  blockMagN_ = winMagN_ = 0;
+  blockTMin_ = winTMin_ = 1e300;
+  blockTMax_ = winTMax_ = -1e300;
+  blockTSum_ = winTSum_ = 0;
+  blockTN_ = winTN_ = 0;
+  windowCollectedNs_ = 0;
+}
+
+double GyroBiasCollector::progress() const {
+  if (state_ == State::Done)
+    return 1.0;
+  if (state_ != State::Collecting || cfg_.windowNs <= 0)
+    return 0;
+  const double p = double(windowCollectedNs_) / double(cfg_.windowNs);
+  return p > 1 ? 1 : p;
+}
+
+void GyroBiasCollector::advance(int64_t tNs) {
+  if (state_ != State::Collecting)
+    return;
+  if (!blockStarted_) {
+    blockStarted_ = true;
+    blockStart_ = tNs;
+    return;
+  }
+  if (tNs < blockStart_) {
+    blockStart_ = tNs;
+    return;
+  }
+  if (tNs - blockStart_ < cfg_.blockNs)
+    return;
+  if (tNs - blockStart_ > 2 * cfg_.blockNs) { // data gap: the window is not continuous
+    restarts_++;
+    restartWindow();
+    blockStart_ = tNs;
+    return;
+  }
+  closeBlock();
+  blockStart_ += cfg_.blockNs;
+}
+
+void GyroBiasCollector::closeBlock() {
+  bool ok = block_.nGyro >= 2 && block_.nAccel >= 2;
+  for (int k = 0; k < 3 && ok; k++) {
+    if (!(block_.gyroStd(k) < cfg_.maxBlockStd) || !(block_.gyroP2P(k) < cfg_.maxBlockP2P))
+      ok = false;
+    if (cfg_.maxAccelAxisStd > 0 && !(block_.accelStd(k) < cfg_.maxAccelAxisStd))
+      ok = false;
+  }
+  if (ok && !(block_.accelNormStd() < cfg_.maxAccelNormStd))
+    ok = false;
+
+  if (!ok) {
+    restarts_++;
+    restartWindow();
+    return;
+  }
+  window_.merge(block_);
+  for (int k = 0; k < 3; k++)
+    winMagSum_[k] += blockMagSum_[k];
+  winMagN_ += blockMagN_;
+  if (blockTN_ > 0) {
+    if (blockTMin_ < winTMin_)
+      winTMin_ = blockTMin_;
+    if (blockTMax_ > winTMax_)
+      winTMax_ = blockTMax_;
+    winTSum_ += blockTSum_;
+    winTN_ += blockTN_;
+  }
+  windowCollectedNs_ += cfg_.blockNs;
+  block_.clear();
+  for (int k = 0; k < 3; k++)
+    blockMagSum_[k] = 0;
+  blockMagN_ = 0;
+  blockTMin_ = 1e300;
+  blockTMax_ = -1e300;
+  blockTSum_ = 0;
+  blockTN_ = 0;
+}
+
+void GyroBiasCollector::addGyro(int64_t tNs, const double w[3]) {
+  if (state_ != State::Collecting || !isfinite(w[0]) || !isfinite(w[1]) || !isfinite(w[2]))
+    return;
+  advance(tNs);
+  block_.addGyro(w, kZero);
+}
+
+void GyroBiasCollector::addAccel(int64_t tNs, const double a[3]) {
+  if (state_ != State::Collecting || !isfinite(a[0]) || !isfinite(a[1]) || !isfinite(a[2]))
+    return;
+  advance(tNs);
+  block_.addAccel(a);
+}
+
+void GyroBiasCollector::addMag(int64_t tNs, const double m[3]) {
+  if (state_ != State::Collecting || !isfinite(m[0]) || !isfinite(m[1]) || !isfinite(m[2]))
+    return;
+  (void)tNs;
+  for (int k = 0; k < 3; k++)
+    blockMagSum_[k] += m[k];
+  blockMagN_++;
+}
+
+void GyroBiasCollector::addTemperature(int64_t tNs, double temp) {
+  if (state_ != State::Collecting || !isfinite(temp))
+    return;
+  (void)tNs;
+  if (temp < blockTMin_)
+    blockTMin_ = temp;
+  if (temp > blockTMax_)
+    blockTMax_ = temp;
+  blockTSum_ += temp;
+  blockTN_++;
+}
+
+void GyroBiasCollector::finish(int64_t nowNs, bool complete) {
+  (void)nowNs;
+  state_ = State::Done;
+  res_ = GyroBiasResult();
+  res_.restarts = restarts_;
+  if (!complete) {
+    res_.result = restarts_ > 0 ? CalResult::Motion : CalResult::Timeout;
+    return;
+  }
+  res_.checks |= kGyroCheckComplete;
+  res_.nGyro = window_.nGyro;
+  res_.nAccel = window_.nAccel;
+  res_.nMag = winMagN_;
+  bool biasOk = true, noiseOk = true;
+  for (int k = 0; k < 3; k++) {
+    res_.bias[k] = window_.gyroMean(k);
+    res_.noiseStd[k] = window_.gyroStd(k);
+    res_.accelMean[k] = window_.accelMean(k);
+    res_.magMean[k] = winMagN_ > 0 ? winMagSum_[k] / winMagN_ : 0;
+    if (!(fabs(res_.bias[k]) < cfg_.maxBias))
+      biasOk = false;
+    if (!(res_.noiseStd[k] < cfg_.maxNoiseStd))
+      noiseOk = false;
+  }
+  res_.haveTemp = winTN_ > 0;
+  if (res_.haveTemp) {
+    res_.tempDelta = winTMax_ - winTMin_;
+    res_.tempMean = winTSum_ / winTN_;
+  }
+  const bool tempOk = !res_.haveTemp || res_.tempDelta < cfg_.maxTempDelta;
+  if (biasOk)
+    res_.checks |= kGyroCheckBias;
+  if (noiseOk)
+    res_.checks |= kGyroCheckNoise;
+  if (tempOk)
+    res_.checks |= kGyroCheckTemp;
+  if (!biasOk)
+    res_.result = CalResult::FailRange;
+  else if (!noiseOk || !tempOk)
+    res_.result = CalResult::FailResidual;
+  else
+    res_.result = CalResult::Pass;
+}
+
+bool GyroBiasCollector::poll(int64_t nowNs) {
+  if (state_ != State::Collecting)
+    return false;
+  if (windowCollectedNs_ >= cfg_.windowNs) {
+    finish(nowNs, true);
+    return true;
+  }
+  if (nowNs >= deadline_) {
+    finish(nowNs, false);
+    return true;
+  }
+  return false;
+}
+
+} // namespace Calib
+} // namespace DSP
+} // namespace VCTR
