@@ -72,6 +72,15 @@ struct BodySimParams {
    * angle convention is unchanged (rotation about the tilted hinge line). Bottom flaps are not canted.
    */
   float topFlapCantRad = 0.17453f; ///< 10 deg.
+  /**
+   * Fold direction of the flaps (OPEN QUESTION for the owner, 2026-11-21). false (default): an increasing angle
+   * folds the flap toward the back (+X, downstream in the belly-down fall); true: toward the belly (-X, upstream).
+   * Only the sign of the flaps' sideways (Y) force changes, so only the azimuth (tau_x) response to the
+   * controller's u0 mixer flips: with false it is reversed against ControlAttitudeFlaps at every angle of attack
+   * tested, with true it has the controller's sign; pitch, roll, drag and terminal speed are identical
+   * (test_sim_aero "control axis signs", ExVectrDSP.md Known issues).
+   */
+  bool flapFoldTowardBelly = false;
 
   // ---- Air ----
   float airDensity_kgm3 = 1.2f; ///< rho.

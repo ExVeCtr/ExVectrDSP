@@ -231,8 +231,10 @@ void BodySimModel::flapFrame(int index, float angle, Math::Vector<float, 3> &n, 
   const int pair = index < 2 ? 0 : 1;
   const float side = (index == 0 || index == 2) ? 1.0f : -1.0f; // TL, BL on +Y
   const float ca = cosf(angle), sa = sinf(angle);
-  // Uncanted: TL/BL rotate by -angle about Z, TR/BR by +angle: n = Rz(-+a) x, d = Rz(-+a) (+-y), e = z.
-  float ny = -side * sa, nz = 0.0f, dy = side * ca, dz = 0.0f, ey = 0.0f, ez = 1.0f;
+  // Uncanted, fold toward +X: TL/BL rotate by -angle about Z, TR/BR by +angle: n = Rz(-+a) x, d = Rz(-+a) (+-y),
+  // e = z. Fold toward -X (flapFoldTowardBelly): the rotation sense is mirrored, d_x = -sin a, n_y = +side sin a.
+  const float fold = params_.flapFoldTowardBelly ? -1.0f : 1.0f; // sign of d_x
+  float ny = -fold * side * sa, nz = 0.0f, dy = side * ca, dz = 0.0f, ey = 0.0f, ez = 1.0f;
   // Cant: rotation about X through the lower hinge point that takes the axial direction z to
   // (0, -side sin c, cos c), i.e. the upper end moves toward the axis (rotation angle phi = side c about X):
   // y' = y cos(phi) - z sin(phi), z' = y sin(phi) + z cos(phi).
@@ -241,7 +243,7 @@ void BodySimModel::flapFrame(int index, float angle, Math::Vector<float, 3> &n, 
   const float dy2 = dy * cc - dz * sc, dz2 = dy * sc + dz * cc;
   const float ey2 = ey * cc - ez * sc, ez2 = ey * sc + ez * cc;
   n = {ca, ny2, nz2};
-  d = {sa, dy2, dz2};
+  d = {fold * sa, dy2, dz2};
   e = {0.0f, ey2, ez2};
 }
 
