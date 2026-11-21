@@ -177,6 +177,18 @@ float BodySimModel::flapCn(float alpha) const {
   return (1.0f - sigma) * params_.flapCnAlpha * sa * ca + sigma * params_.flapCn90 * sa;
 }
 
+float BodySimModel::flapAeroAngle(float a) const {
+  const float k = params_.flapEffectiveSmoothRad;
+  const float aMin = params_.flapEffectiveMinAngleRad;
+  if (aMin > 0.0f)
+    a = 0.5f * (a + aMin + sqrtf((a - aMin) * (a - aMin) + k * k));
+  if (params_.flapEffectiveRetractMarginRad > 0.0f) {
+    const float aMax = 0.5f * kPi - params_.flapEffectiveRetractMarginRad;
+    a = 0.5f * (a + aMax - sqrtf((a - aMax) * (a - aMax) + k * k));
+  }
+  return a;
+}
+
 float BodySimModel::bodyDiameterAt(float z) const {
   const float d = 2.0f * params_.bodyRadius_m;
   if (z <= zNoseBase_)
@@ -272,7 +284,27 @@ void BodySimModel::addFlap(int index, float angle, const Math::Vector<float, 3> 
                                        e * flapSc_[pair];
 
   const Math::Vector<float, 3> pc = hinge + d * (0.5f * g.width_m);
-  const Math::Vector<float, 3> u = u0 - omega.cross(pc);
+  Math::Vector<float, 3> u = u0 - omega.cross(pc);
+  // Candidate interaction effects (off by default), evaluated at the flap reference point pc.
+  const float rc2 = pc(0) * pc(0) + pc(1) * pc(1);
+  const float R2 = p.bodyRadius_m * p.bodyRadius_m;
+  if (p.flapBodyCrossflowGain != 0.0f && rc2 > 1e-8f) {
+    // (u - i v)_p = -V R^2 / z^2, V = ux + i uy, 1/z^2 = (x^2 - y^2 - 2 i x y) / r^4.
+    const float x = pc(0), y = pc(1), r4 = rc2 * rc2;
+    const float ar = (x * x - y * y) / r4, ai = -2.0f * x * y / r4;      // 1/z^2 = ar + i ai
+    const float pr = u(0) * ar - u(1) * ai, pi = u(0) * ai + u(1) * ar; // V / z^2
+    // u_p - i v_p = -R^2 (pr + i pi): u_p = -R^2 pr, v_p = +R^2 pi.
+    u(0) += p.flapBodyCrossflowGain * (-R2 * pr);
+    u(1) += p.flapBodyCrossflowGain * (R2 * pi);
+  }
+  if (p.flapSidewashGain != 0.0f && rc2 > 1e-8f) {
+    const float uPerp = sqrtf(u0(0) * u0(0) + u0(1) * u0(1));
+    const float sinAb = uPerp / sqrtf(uPerp * uPerp + u0(2) * u0(2) + 1e-12f);
+    const float rc = sqrtf(rc2);
+    const float delta = p.flapSidewashGain * (R2 / rc2) * sinAb;
+    u(0) -= delta * uPerp * pc(0) / rc;
+    u(1) -= delta * uPerp * pc(1) / rc;
+  }
   const float speed2 = u.dot(u);
   if (speed2 < 1e-6f) {
     loads_.flapForce[index] = {0, 0, 0};
@@ -281,8 +313,10 @@ void BodySimModel::addFlap(int index, float angle, const Math::Vector<float, 3> 
   const float speed = sqrtf(speed2);
   const float un = u.dot(n), ud = u.dot(d);
   const float alpha = asinf(clampf(fabsf(un) / speed, 0.0f, 1.0f));
-  const float fmag = 0.5f * p.airDensity_kgm3 * p.aeroCalibration * g.effectiveness * flapArea_[pair] * speed2 *
-                     flapCn(alpha);
+  const float sAng = sinf(angle);
+  const float shield = 1.0f - clampf(p.flapFoldShieldFactor, 0.0f, 1.0f) * sAng * sAng;
+  const float fmag = 0.5f * p.airDensity_kgm3 * p.aeroCalibration * g.effectiveness * shield * flapArea_[pair] *
+                     speed2 * flapCn(alpha);
   const Math::Vector<float, 3> F = n * (un >= 0.0f ? fmag : -fmag);
   // Chordwise centre of pressure from the leading edge: 1/4 chord at small alpha, 1/2 at 90 deg.
   const float xLead = g.width_m * (0.5f - 0.25f * cosf(alpha));
@@ -340,8 +374,8 @@ void BodySimModel::computeAero() {
   const float cdAx = u0(2) > 0.0f ? p.cdAxialTailFirst : p.cdAxialNoseFirst;
   loads_.aeroForce(2) += k * cdAx * baseArea_ * u0(2) * fabsf(u0(2)); // on the axis: no moment
 
-  for (int i = 0; i < 4; i++)
-    addFlap(i, flapAngle_[i], u0, omega);
+  for (int i = 0; i < 4; i++) // aerodynamics with the effective angle; the servo angle stays flapAngle_
+    addFlap(i, flapAeroAngle(flapAngle_[i]), u0, omega);
 }
 
 void BodySimModel::groundContact(const Math::Vector<float, 6> &posBefore, const Math::Vector<float, 7> &attBefore) {

@@ -22,7 +22,9 @@
  * - Body axial force 1/2 rho Cd_axial A_base u_z |u_z| (separate coefficients for tail-first and nose-first flow).
  * - Each flap: flat plate normal force 1/2 rho |u|^2 A C_N(alpha) along the plate normal, C_N blended from the
  *   attached (C_N_alpha sin a cos a) to the stalled (C_N90 sin a) branch, centre of pressure moving along the
- *   chord from 1/4 (small alpha) to 1/2 (alpha = 90 deg): x_cp/c = 0.5 -/+ 0.25 cos(alpha).
+ *   chord from 1/4 (small alpha) to 1/2 (alpha = 90 deg): x_cp/c = 0.5 -/+ 0.25 cos(alpha). The flap geometry in
+ *   the aerodynamics uses the effective angle a_eff = smoothmax(a, 20 deg) (an extended flap still sees a small
+ *   effective angle, BodySimParams::flapEffectiveMinAngleRad); the servo angle stays the true angle.
  * - One global calibration factor scales every aerodynamic force (see BodySimParams::aeroCalibration).
  */
 
@@ -73,8 +75,9 @@ struct BodySimParams {
    */
   float topFlapCantRad = 0.17453f; ///< 10 deg.
   /**
-   * Fold direction of the flaps (OPEN QUESTION for the owner, 2026-11-21). false (default): an increasing angle
-   * folds the flap toward the back (+X, downstream in the belly-down fall); true: toward the belly (-X, upstream).
+   * Fold direction of the flaps. false (default, CONFIRMED by the owner 2026-11-21: folded flaps point toward +X,
+   * the back): an increasing angle folds the flap toward the back (+X, downstream in the belly-down fall); true:
+   * toward the belly (-X, upstream), kept for comparison.
    * Only the sign of the flaps' sideways (Y) force changes, so only the azimuth (tau_x) response to the
    * controller's u0 mixer flips: with false it is reversed against ControlAttitudeFlaps at every angle of attack
    * tested, with true it has the controller's sign; pitch, roll, drag and terminal speed are identical
@@ -98,6 +101,40 @@ struct BodySimParams {
   float flapCn90 = 1.17f;             ///< Normal-force coefficient broadside (alpha = 90 deg).
   float flapStallAngle_rad = 0.5236f; ///< 30 deg: centre of the attached -> stalled blend (low-AR plates stall late).
   float flapStallWidth_rad = 0.0873f; ///< 5 deg: width of the blend (logistic).
+
+  /**
+   * Effective aerodynamic flap angle (owner 2026-11-21). The flow around the body means a fully extended flap
+   * (fold angle 0) still sees a small effective angle instead of producing pure drag. The aerodynamic calculation
+   * (plate normal = force direction, C_N argument, centre of pressure) uses
+   *   a_eff = smoothmax(a, a_min) = 0.5 (a + a_min + sqrt((a - a_min)^2 + k^2)),  k = flapEffectiveSmoothRad,
+   * which is C1 (C-infinity) and converges to a_min (+ k^2 / (4 a_min)) for a -> 0 and to a far above a_min. The
+   * servo angle (flapAngle(), telemetry) stays the true angle. flapEffectiveMinAngleRad <= 0 disables it.
+   */
+  float flapEffectiveMinAngleRad = 0.349066f; ///< a_min, 20 deg.
+  float flapEffectiveSmoothRad = 0.087266f;   ///< k, 5 deg: transition width of the smooth max / min.
+  /// Same treatment at the retracted end: a_eff = smoothmin(a_eff, 90 deg - margin). 0 = off (a folded flap is
+  /// edge-on to the belly-down flow; kept as an option).
+  float flapEffectiveRetractMarginRad = 0.0f;
+
+  // ---- Candidate flap/body interaction effects (azimuth sign investigation, 2026-11-21; all off by default) ----
+  /**
+   * (a) Sidewash at the flap: the local crossflow is turned toward the body axis (gain > 0) or away from it
+   * (gain < 0) by delta = gain (R / r_c)^2 sin(alpha_body), r_c = distance of the flap's reference point from the
+   * axis, alpha_body = angle between the flow and the body axis (90 deg belly-down). Implemented as an extra
+   * velocity delta |u_perp| along -r_hat (radial unit vector of the flap point).
+   */
+  float flapSidewashGain = 0.0f;
+  /**
+   * (b) Body-crossflow induced flow: adds gain x the 2-D potential-flow perturbation of a circular cylinder of
+   * radius R in the body crossflow, evaluated at the flap's reference point: (u - i v)_p = -V R^2 / z^2 with
+   * V = u_x + i u_y (local crossflow) and z = x + i y. 1 = full potential flow, 0 = off.
+   */
+  float flapBodyCrossflowGain = 0.0f;
+  /**
+   * (c) Flap/body interference: the effective flap area is multiplied by 1 - factor sin^2(a_eff), i.e. a flap
+   * folding against the body side (into its boundary layer / wake) loses area. 0 = off, 1 = no force when folded.
+   */
+  float flapFoldShieldFactor = 0.0f;
 
   /**
    * Global calibration factor on every aerodynamic force and moment. Without it (1.0) the model falls belly-down
@@ -211,6 +248,8 @@ class BodySimModel {
 
   /// Flat-plate normal-force coefficient at angle of attack alpha (0..pi/2), exposed for tests.
   float flapCn(float alpha) const;
+  /// Effective aerodynamic flap angle for the true (servo) angle `a`, rad (see flapEffectiveMinAngleRad).
+  float flapAeroAngle(float a) const;
   /// Plate geometry of flap `index` (TL, TR, BL, BR) at flap angle `angle` in the body frame: area centroid and unit
   /// normal (cant included), exposed for tests.
   void flapPlate(int index, float angle, Math::Vector<float, 3> &centroid, Math::Vector<float, 3> &normal) const;
