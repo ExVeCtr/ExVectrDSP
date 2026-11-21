@@ -133,18 +133,22 @@ struct BodySimParams {
   /**
    * (c) Flap/body interference: the effective flap area is multiplied by 1 - factor sin^2(a_eff), i.e. a flap
    * folding against the body side (into its boundary layer / wake) loses area. 0 = off, 1 = no force when folded.
+   * ON by default since 2026-11-21 (owner-approved, 0.7): it is the only candidate effect that gives the flap
+   * controller's expected yaw (azimuth) sign at the neutral angles 50/40 deg over AoA -20..+20 deg, and the real
+   * ship's heading loop works. Fitted to the sign, not measured: the owner plans a bench pivot test in an airflow.
    */
-  float flapFoldShieldFactor = 0.0f;
+  float flapFoldShieldFactor = 0.7f;
 
   /**
    * Global calibration factor on every aerodynamic force and moment. Without it (1.0) the model falls belly-down
-   * at neutral flaps at 13.5 m/s; the real ship falls at 6.4 m/s (21..25 km/h, flight position filter), which
-   * needs a factor of 4.00 (an effective drag area of 0.43 m^2 instead of 0.097 m^2). That is NOT a plausible
+   * at neutral flaps at about 13.5 m/s; the real ship falls at 6.4 m/s (21..25 km/h, flight position filter), which
+   * needs a factor of 4.64 with the fold shield 0.7 (4.00 without it; an effective drag area of 0.43 m^2 instead of
+   * 0.097 m^2). That is NOT a plausible
    * coefficient for the documented 1.1 kg ship of 13 x 74 cm: it stands for an unexplained difference (mass, the
    * speed measurement, or missing drag sources) to be resolved with the owner.
    * Because it scales all aerodynamic forces equally, it also scales stiffness, damping and flap authority.
    */
-  float aeroCalibration = 4.00f;
+  float aeroCalibration = 4.64f;
 
   // ---- Actuators ----
   /// True: the model applies the servo rate limits itself (host harness). False on the vehicle, where the flap
