@@ -50,7 +50,7 @@ struct BodySimFlapGeometry {
  */
 struct BodySimParams {
   // ---- Mass properties (measured, double swing; owner 2026-11-21) ----
-  float mass_kg = 1.1f;   ///< Total mass incl. battery and motors (= VEHICLE_MASS_KG).
+  float mass_kg = 1.2f;   ///< Total mass incl. battery and motors (= VEHICLE_MASS_KG).
   float inertiaXX = 0.044f; ///< kg m^2 about the CoM, body X (pitch/yaw axes are X and Y).
   float inertiaYY = 0.044f; ///< kg m^2, body Y.
   float inertiaZZ = 0.004f; ///< kg m^2, body Z (long axis).
@@ -65,13 +65,13 @@ struct BodySimParams {
   BodySimFlapGeometry flapTop = {0.07f, 0.14f, 0.08f, 0.53f, 1.0f};    ///< TL, TR.
   BodySimFlapGeometry flapBottom = {0.08f, 0.21f, 0.08f, 0.01f, 1.0f}; ///< BL, BR: spans 0.01..0.22 m above the bottom.
   /**
-   * Inward cant of the TOP flaps (owner 2026-11-21, about 5 deg): each top flap is mounted tilted about the
+   * Inward cant of the TOP flaps (owner 2026-11-21, 10 deg): each top flap is mounted tilted about the
    * horizontal line through its LOWER hinge point so that its upper end moves toward the body axis (the top
    * connection sits close to the nose cone). The lower hinge point stays at (r = flapHingeRadius, z = lower edge);
    * the hinge line, plate normal, centroid, centre of pressure and area direction are rotated with it; the flap
    * angle convention is unchanged (rotation about the tilted hinge line). Bottom flaps are not canted.
    */
-  float topFlapCantRad = 0.08727f; ///< 5 deg.
+  float topFlapCantRad = 0.17453f; ///< 10 deg.
 
   // ---- Air ----
   float airDensity_kgm3 = 1.2f; ///< rho.
@@ -94,11 +94,11 @@ struct BodySimParams {
    * Global calibration factor on every aerodynamic force and moment. Without it (1.0) the model falls belly-down
    * at neutral flaps at 13.5 m/s; the real ship falls at 6.4 m/s (21..25 km/h, flight position filter), which
    * needs CAL_PLACEHOLDER (an effective drag area CDA_PLACEHOLDER instead of 0.097 m^2). That is NOT a plausible
-   * coefficient for the documented 1.1 kg ship of 13 x 74 cm: it stands for an unexplained difference (mass, the
+   * coefficient for the documented 1.2 kg ship of 13 x 74 cm: it stands for an unexplained difference (mass, the
    * speed measurement, or missing drag sources) to be resolved with the owner.
    * Because it scales all aerodynamic forces equally, it also scales stiffness, damping and flap authority.
    */
-  float aeroCalibration = 4.23f;
+  float aeroCalibration = 4.38f;
 
   // ---- Actuators ----
   /// True: the model applies the servo rate limits itself (host harness). False on the vehicle, where the flap
