@@ -54,6 +54,8 @@ void BodySimModel::applyParams() {
   zNoseCp_ = zTip_ - p.noseLength_m * (1.0f - 8.0f / 15.0f);
   baseArea_ = kPi * p.bodyRadius_m * p.bodyRadius_m;
 
+  buildGust();
+
   const BodySimFlapGeometry *g[2] = {&p.flapTop, &p.flapBottom};
   for (int k = 0; k < 2; k++) {
     const float w = g[k]->width_m, h = g[k]->height_m, b = g[k]->bottomFromShipBottom_m;
@@ -64,7 +66,9 @@ void BodySimModel::applyParams() {
     flapArea_[k] = aRect - aTri;
     // Centroid along the axis: rectangle minus the corner triangle at the nose-side outer corner.
     const float zc = (aRect * (b + 0.5f * h) - aTri * (b + h - c / 3.0f)) / flapArea_[k];
-    flapZc_[k] = zc - p.cgFromBottom_m;
+    flapSc_[k] = zc - b;
+    flapZLow_[k] = b - p.cgFromBottom_m;
+    flapCant_[k] = k == 0 ? p.topFlapCantRad : 0.0f;
   }
 }
 
@@ -109,9 +113,62 @@ void BodySimModel::setWind(float speed_mps, float direction_rad) {
     params_.windDirection_rad = direction_rad;
 }
 
+void BodySimModel::buildGust() {
+  uint32_t s = params_.gustSeed ? params_.gustSeed : 0x9E3779B9u;
+  auto next = [&s]() { // xorshift32
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return s;
+  };
+  for (int k = 0; k < 12; k++) // warm-up: small seeds start poorly mixed
+    next();
+  const float period = clampf(params_.gustPeriod_s, 0.5f, 30.0f);
+  for (int p = 0; p < 2; p++)
+    for (int i = 0; i < kGustTerms; i++) {
+      const float u1 = float(next() >> 8) / 16777216.0f, u2 = float(next() >> 8) / 16777216.0f;
+      gustOmega_[p][i] = 2.0f * kPi / period * (0.5f + 1.5f * u1);
+      gustPhase_[p][i] = 2.0f * kPi * u2;
+    }
+}
+
+void BodySimModel::gustAt(double t_s, float &along, float &across) const {
+  const float strength = clampf(params_.gustStrength_mps, 0.0f, 10.0f);
+  along = 0.0f;
+  across = 0.0f;
+  if (strength <= 0.0f)
+    return;
+  double sum[2] = {0.0, 0.0};
+  for (int p = 0; p < 2; p++)
+    for (int i = 0; i < kGustTerms; i++)
+      sum[p] += sin(double(gustOmega_[p][i]) * t_s + double(gustPhase_[p][i]));
+  const float a = strength / float(kGustTerms);
+  along = a * float(sum[0]);
+  across = a * clampf(params_.gustSpread, 0.0f, 1.0f) * float(sum[1]);
+}
+
+void BodySimModel::setGust(float strength_mps, float period_s, uint32_t seed) {
+  if (isfinite(strength_mps))
+    params_.gustStrength_mps = clampf(strength_mps, 0.0f, 10.0f);
+  if (isfinite(period_s))
+    params_.gustPeriod_s = clampf(period_s, 0.5f, 30.0f);
+  params_.gustSeed = seed;
+  buildGust();
+}
+
+void BodySimModel::clearWind() {
+  const BodySimParams d;
+  params_.windSpeed_mps = 0.0f;
+  params_.windDirection_rad = 0.0f;
+  setGust(0.0f, d.gustPeriod_s, d.gustSeed);
+}
+
 Math::Vector<float, 3> BodySimModel::windWorld() const {
-  return {params_.windSpeed_mps * cosf(params_.windDirection_rad),
-          params_.windSpeed_mps * sinf(params_.windDirection_rad), 0.0f};
+  const float cd = cosf(params_.windDirection_rad), sd = sinf(params_.windDirection_rad);
+  float ga, gc;
+  gustAt(time_s_, ga, gc);
+  const float along = params_.windSpeed_mps + ga;
+  return {along * cd - gc * sd, along * sd + gc * cd, 0.0f};
 }
 
 float BodySimModel::flapCn(float alpha) const {
@@ -169,17 +226,48 @@ void BodySimModel::updateActuators(float dt) {
   }
 }
 
+void BodySimModel::flapFrame(int index, float angle, Math::Vector<float, 3> &n, Math::Vector<float, 3> &d,
+                             Math::Vector<float, 3> &e) const {
+  const int pair = index < 2 ? 0 : 1;
+  const float side = (index == 0 || index == 2) ? 1.0f : -1.0f; // TL, BL on +Y
+  const float ca = cosf(angle), sa = sinf(angle);
+  // Uncanted: TL/BL rotate by -angle about Z, TR/BR by +angle: n = Rz(-+a) x, d = Rz(-+a) (+-y), e = z.
+  float ny = -side * sa, nz = 0.0f, dy = side * ca, dz = 0.0f, ey = 0.0f, ez = 1.0f;
+  // Cant: rotation about X through the lower hinge point that takes the axial direction z to
+  // (0, -side sin c, cos c), i.e. the upper end moves toward the axis (rotation angle phi = side c about X):
+  // y' = y cos(phi) - z sin(phi), z' = y sin(phi) + z cos(phi).
+  const float cc = cosf(flapCant_[pair]), sc = side * sinf(flapCant_[pair]);
+  const float ny2 = ny * cc - nz * sc, nz2 = ny * sc + nz * cc;
+  const float dy2 = dy * cc - dz * sc, dz2 = dy * sc + dz * cc;
+  const float ey2 = ey * cc - ez * sc, ez2 = ey * sc + ez * cc;
+  n = {ca, ny2, nz2};
+  d = {sa, dy2, dz2};
+  e = {0.0f, ey2, ez2};
+}
+
+void BodySimModel::flapPlate(int index, float angle, Math::Vector<float, 3> &centroid,
+                             Math::Vector<float, 3> &normal) const {
+  const int pair = index < 2 ? 0 : 1;
+  const float side = (index == 0 || index == 2) ? 1.0f : -1.0f;
+  const BodySimFlapGeometry &g = pair == 0 ? params_.flapTop : params_.flapBottom;
+  Math::Vector<float, 3> n, d, e;
+  flapFrame(index, angle, n, d, e);
+  const Math::Vector<float, 3> low = {0.0f, side * params_.flapHingeRadius_m, flapZLow_[pair]};
+  centroid = low + e * flapSc_[pair] + d * (0.5f * g.width_m);
+  normal = n;
+}
+
 void BodySimModel::addFlap(int index, float angle, const Math::Vector<float, 3> &u0,
                            const Math::Vector<float, 3> &omega) {
   const BodySimParams &p = params_;
   const int pair = index < 2 ? 0 : 1;
   const BodySimFlapGeometry &g = pair == 0 ? p.flapTop : p.flapBottom;
   const float side = (index == 0 || index == 2) ? 1.0f : -1.0f; // TL, BL on +Y
-  const float ca = cosf(angle), sa = sinf(angle);
-  // TL/BL rotate by -angle about Z, TR/BR by +angle: normal n = Rz(-+a) x, radial d = Rz(-+a) (+-y).
-  const Math::Vector<float, 3> n = {ca, -side * sa, 0.0f};
-  const Math::Vector<float, 3> d = {sa, side * ca, 0.0f};
-  const Math::Vector<float, 3> hinge = {0.0f, side * p.flapHingeRadius_m, flapZc_[pair]};
+  Math::Vector<float, 3> n, d, e;
+  flapFrame(index, angle, n, d, e);
+  // Hinge reference point: on the hinge line at the area centroid height (canted with the flap).
+  const Math::Vector<float, 3> hinge = Math::Vector<float, 3>{0.0f, side * p.flapHingeRadius_m, flapZLow_[pair]} +
+                                       e * flapSc_[pair];
 
   const Math::Vector<float, 3> pc = hinge + d * (0.5f * g.width_m);
   const Math::Vector<float, 3> u = u0 - omega.cross(pc);

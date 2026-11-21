@@ -46,7 +46,7 @@ struct BodySimFlapGeometry {
 /**
  * All parameters of the model with units and physical meaning. Defaults: owner's ship facts (2026-11-21) and
  * textbook coefficients, with `aeroCalibration` chosen so that the belly-down steady fall at neutral flaps
- * (top 50 deg, bottom 40 deg) is 7.7 m/s (flight 4).
+ * (top 50 deg, bottom 40 deg) is 6.4 m/s (real flight, 21..25 km/h, owner 2026-11-21).
  */
 struct BodySimParams {
   // ---- Mass properties (measured, double swing; owner 2026-11-21) ----
@@ -63,7 +63,15 @@ struct BodySimParams {
   float cgFromBottom_m = 0.37f;    ///< CoM above the bottom of the ship ("basically the middle" of 0.74 m).
   float flapHingeRadius_m = 0.065f; ///< Hinge line distance from the axis (on the tube surface).
   BodySimFlapGeometry flapTop = {0.07f, 0.14f, 0.08f, 0.53f, 1.0f};    ///< TL, TR.
-  BodySimFlapGeometry flapBottom = {0.08f, 0.21f, 0.08f, 0.10f, 1.0f}; ///< BL, BR.
+  BodySimFlapGeometry flapBottom = {0.08f, 0.21f, 0.08f, 0.01f, 1.0f}; ///< BL, BR: spans 0.01..0.22 m above the bottom.
+  /**
+   * Inward cant of the TOP flaps (owner 2026-11-21, about 5 deg): each top flap is mounted tilted about the
+   * horizontal line through its LOWER hinge point so that its upper end moves toward the body axis (the top
+   * connection sits close to the nose cone). The lower hinge point stays at (r = flapHingeRadius, z = lower edge);
+   * the hinge line, plate normal, centroid, centre of pressure and area direction are rotated with it; the flap
+   * angle convention is unchanged (rotation about the tilted hinge line). Bottom flaps are not canted.
+   */
+  float topFlapCantRad = 0.08727f; ///< 5 deg.
 
   // ---- Air ----
   float airDensity_kgm3 = 1.2f; ///< rho.
@@ -84,12 +92,13 @@ struct BodySimParams {
 
   /**
    * Global calibration factor on every aerodynamic force and moment. Without it (1.0) the model falls belly-down
-   * at neutral flaps at 13.5 m/s; flight 4 fell at 7.7 m/s, which needs 3.08 (a drag area of 0.30 m^2 instead of
-   * 0.097 m^2). That is NOT a plausible coefficient for the documented 1.1 kg ship of 13 x 74 cm: it stands for an
-   * unexplained difference (mass, the 7.7 m/s figure, or missing drag sources) to be resolved with the owner.
+   * at neutral flaps at 13.5 m/s; the real ship falls at 6.4 m/s (21..25 km/h, flight position filter), which
+   * needs CAL_PLACEHOLDER (an effective drag area CDA_PLACEHOLDER instead of 0.097 m^2). That is NOT a plausible
+   * coefficient for the documented 1.1 kg ship of 13 x 74 cm: it stands for an unexplained difference (mass, the
+   * speed measurement, or missing drag sources) to be resolved with the owner.
    * Because it scales all aerodynamic forces equally, it also scales stiffness, damping and flap authority.
    */
-  float aeroCalibration = 3.08f;
+  float aeroCalibration = 4.23f;
 
   // ---- Actuators ----
   /// True: the model applies the servo rate limits itself (host harness). False on the vehicle, where the flap
@@ -109,6 +118,21 @@ struct BodySimParams {
   // ---- Wind (steady, no gusts; off by default) ----
   float windSpeed_mps = 0.0f;     ///< Horizontal wind speed, m/s (>= 0).
   float windDirection_rad = 0.0f; ///< Direction the air moves TOWARD, counterclockwise from North toward West (NWU).
+
+  // ---- Gusts (simulation only, owner-approved exception 2026-11-21; deterministic, off by default) ----
+  /**
+   * Gust model: the gust is a deterministic sum of 8 sinusoids with equal amplitude strength/8, frequencies
+   * (0.5 .. 2) / gustPeriod_s and phases drawn from a xorshift32 generator seeded with gustSeed (no wall clock, no
+   * global random state), evaluated at the simulated time. It is added to the mean wind in the world frame, along
+   * the mean wind direction (a head or tail gust); a second independent process of the same kind, scaled by
+   * gustSpread, acts horizontally across the mean direction. |gust| along the mean never exceeds gustStrength_mps
+   * (hard bound; realised peaks are about 0.6..0.8 of it), RMS = strength / 4, correlation time about the period.
+   * Same seed and parameters give a bit-identical gust series.
+   */
+  float gustStrength_mps = 0.0f; ///< Peak (bound) of the extra speed along the mean direction, m/s (0..10; 0 = no gusts).
+  float gustPeriod_s = 5.0f;     ///< Gust timescale, s (0.5..30): the centre period of the sinusoids.
+  uint32_t gustSeed = 1;         ///< Seed of the phases and frequency ratios.
+  float gustSpread = 0.3f;       ///< Amplitude of the crosswind gust process relative to the along-wind one (0..1).
 
   // ---- Integration ----
   float step_s = 0.002f;     ///< Fixed integration step, s.
@@ -145,6 +169,13 @@ class BodySimModel {
   /// Flap angle inputs TL, TR, BL, BR, rad (commanded angles in the harness, "true" angles on the vehicle).
   void setFlapInput(float tl, float tr, float bl, float br);
   void setWind(float speed_mps, float direction_rad);
+  /// Gust settings (clamped: strength 0..10 m/s, period 0.5..30 s); non-finite values are ignored. Rebuilds the
+  /// gust table; the gust series depends only on these values and the simulated time.
+  void setGust(float strength_mps, float period_s, uint32_t seed);
+  /// Wind and gusts off, defaults for the period and seed.
+  void clearWind();
+  /// Gust speed along (index 0) and across (index 1) the mean wind direction at the current simulated time, m/s.
+  void gustAt(double t_s, float &along, float &across) const;
 
   /// One fixed step of params().step_s.
   void step();
@@ -171,6 +202,9 @@ class BodySimModel {
 
   /// Flat-plate normal-force coefficient at angle of attack alpha (0..pi/2), exposed for tests.
   float flapCn(float alpha) const;
+  /// Plate geometry of flap `index` (TL, TR, BL, BR) at flap angle `angle` in the body frame: area centroid and unit
+  /// normal (cant included), exposed for tests.
+  void flapPlate(int index, float angle, Math::Vector<float, 3> &centroid, Math::Vector<float, 3> &normal) const;
   /// Computes the aerodynamic loads for the current state and flap angles (does not integrate).
   void computeAero();
 
@@ -198,7 +232,18 @@ class BodySimModel {
   float zBottom_ = 0.0f, zNoseBase_ = 0.0f, zTip_ = 0.0f, zNoseCp_ = 0.0f;
   float baseArea_ = 0.0f;
   float flapArea_[2] = {0, 0};
-  float flapZc_[2] = {0, 0};
+  float flapSc_[2] = {0, 0};   ///< Area centroid distance from the lower edge along the flap (hinge line), m.
+  float flapZLow_[2] = {0, 0}; ///< Lower hinge point z (body frame), m.
+  float flapCant_[2] = {0, 0}; ///< Inward cant of the pair, rad.
+  /// Orthonormal plate frame of flap `index` at `angle`: normal n, radial d (hinge -> outer edge), axial e (along
+  /// the hinge line, lower -> upper end). Cant about the horizontal X line through the lower hinge point.
+  void flapFrame(int index, float angle, Math::Vector<float, 3> &n, Math::Vector<float, 3> &d,
+                 Math::Vector<float, 3> &e) const;
+
+  static constexpr int kGustTerms = 8;
+  float gustOmega_[2][kGustTerms] = {};
+  float gustPhase_[2][kGustTerms] = {};
+  void buildGust();
 
   BodySimLoads loads_;
   double carry_s_ = 0.0;

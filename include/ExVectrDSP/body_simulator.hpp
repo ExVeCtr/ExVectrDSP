@@ -100,6 +100,12 @@ public:
    * TOWARD, counterclockwise from North toward West (NWU). Non-finite values leave the setting unchanged.
    */
   void setWind(float speed_mps, float direction_rad) { model_.setWind(speed_mps, direction_rad); }
+  /// Gust settings (see BodySimParams, "Gusts"); clearWind() resets wind and gusts.
+  void setGust(float strength_mps, float period_s, uint32_t seed) { model_.setGust(strength_mps, period_s, seed); }
+  void clearWind() { model_.clearWind(); }
+  float gustStrength() const { return model_.params().gustStrength_mps; }
+  float gustPeriod() const { return model_.params().gustPeriod_s; }
+  uint32_t gustSeed() const { return model_.params().gustSeed; }
   float windSpeed() const { return model_.params().windSpeed_mps; }
   float windDirection() const { return model_.params().windDirection_rad; }
 
