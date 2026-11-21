@@ -207,7 +207,7 @@ class BodySimModel {
   void updateActuators(float dt);
   float bodyDiameterAt(float z) const;
   void addFlap(int index, float angle, const Math::Vector<float, 3> &u0, const Math::Vector<float, 3> &omega);
-  void groundContact();
+  void groundContact(const Math::Vector<float, 6> &posBefore, const Math::Vector<float, 7> &attBefore);
 };
 
 } // namespace DSP

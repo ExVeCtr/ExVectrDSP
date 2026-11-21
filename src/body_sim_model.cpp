@@ -254,16 +254,26 @@ void BodySimModel::computeAero() {
     addFlap(i, flapAngle_[i], u0, omega);
 }
 
-void BodySimModel::groundContact() {
+void BodySimModel::groundContact(const Math::Vector<float, 6> &posBefore, const Math::Vector<float, 7> &attBefore) {
   Math::Vector<float, 6> &pos = body_.getPositionState();
   if (pos(5) >= 0.0f)
     return;
+  // Ground (height 0 of the CoM): stop, no sliding, no rotation, no tip-over (simplest contact model). A body that
+  // was already resting keeps its previous horizontal position and attitude, so wind or residual torques cannot
+  // move it along the ground; a body arriving from the air stops where it hits.
+  const bool wasResting = posBefore(5) <= 0.0f;
   pos(5) = 0.0f;
   pos(0) = 0.0f;
   pos(1) = 0.0f;
   if (pos(2) < 0.0f)
     pos(2) = 0.0f;
   Math::Vector<float, 7> &att = body_.getAttitudeState();
+  if (wasResting) {
+    pos(3) = posBefore(3);
+    pos(4) = posBefore(4);
+    for (int i = 3; i < 7; i++)
+      att(i) = attBefore(i);
+  }
   att(0) = 0.0f;
   att(1) = 0.0f;
   att(2) = 0.0f;
@@ -286,8 +296,10 @@ void BodySimModel::step() {
   }
   body_.addForce(loads_.aeroForce);
   body_.addTorque(loads_.aeroTorque);
+  const Math::Vector<float, 6> posBefore = body_.getPositionState();
+  const Math::Vector<float, 7> attBefore = body_.getAttitudeState();
   body_.step(dt);
-  groundContact();
+  groundContact(posBefore, attBefore);
   time_s_ += double(dt);
 }
 
