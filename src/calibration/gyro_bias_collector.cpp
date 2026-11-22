@@ -11,7 +11,8 @@ namespace {
 const double kZero[3] = {0, 0, 0};
 }
 
-void GyroBiasCollector::start(int64_t nowNs, int64_t deadlineNs) {
+void GyroBiasCollector::start(int64_t nowNs, int64_t deadlineNs, int64_t windowNs) {
+  cfg_.windowNs = windowNs > 0 ? windowNs : baseWindowNs_;
   state_ = State::Collecting;
   deadline_ = deadlineNs;
   restarts_ = 0;

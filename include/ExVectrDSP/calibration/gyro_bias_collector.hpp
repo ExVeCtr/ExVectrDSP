@@ -38,8 +38,13 @@ namespace Calib {
  * The accelerometer limits stay as the guard against a slowly rotating or handled ship (a steady rotation has a
  * low gyro std but turns the gravity vector): 10 deg/s gives about 0.5 m/s^2 std, 5 deg/s about 0.25.
  */
+/// Still-window length per run kind (named, not magic). Every judging limit below is the same for both; only the
+/// number of consecutive good 1 s blocks that must occur differs (a failed block restarts the window, never relaxed).
+constexpr int64_t kGyroWindowStartupNs = 5000000000LL;   ///< boot zero, ZeroEstimators, manual runs: 5 good blocks
+constexpr int64_t kGyroWindowCountdownNs = 3000000000LL; ///< the go countdown (Initialisation phase of 5 s): 3 good blocks
+
 struct GyroBiasConfig {
-  int64_t windowNs = 5000000000LL;  ///< 5 s of still data (= 5 consecutive good blocks anywhere before the deadline)
+  int64_t windowNs = kGyroWindowStartupNs;  ///< still data (= windowNs / blockNs consecutive good blocks anywhere before the deadline)
   int64_t blockNs = 1000000000LL;   ///< 1 s motion check blocks
   double maxBlockStd = 1.5 * 3.14159265358979 / 180.0;    ///< rad/s per gyro axis
   double maxBlockP2P = 8.0 * 3.14159265358979 / 180.0;    ///< rad/s per gyro axis (white noise of std s has p2p about 7.5 s per 1000 samples: 5 deg/s failed the owner-like 0.7 deg/s)
@@ -119,10 +124,11 @@ class GyroBiasCollector {
 public:
   enum class State : uint8_t { Idle, Collecting, Done };
 
-  explicit GyroBiasCollector(const GyroBiasConfig &cfg = GyroBiasConfig()) : cfg_(cfg) {}
+  explicit GyroBiasCollector(const GyroBiasConfig &cfg = GyroBiasConfig()) : cfg_(cfg), baseWindowNs_(cfg.windowNs) {}
 
-  /// Starts a new measurement; it must complete by deadlineNs.
-  void start(int64_t nowNs, int64_t deadlineNs);
+  /// Starts a new measurement; it must complete by deadlineNs. `windowNs` > 0 overrides the still-window length for
+  /// this run only (kGyroWindowCountdownNs for the go countdown); 0 = the configured window. All limits unchanged.
+  void start(int64_t nowNs, int64_t deadlineNs, int64_t windowNs = 0);
   void cancel() { state_ = State::Idle; }
 
   void addGyro(int64_t tNs, const double w[3]);
@@ -149,6 +155,7 @@ private:
   void finish(int64_t nowNs, bool complete);
 
   GyroBiasConfig cfg_;
+  int64_t baseWindowNs_ = kGyroWindowStartupNs;
   State state_ = State::Idle;
   int64_t deadline_ = 0;
   int64_t blockStart_ = 0;
