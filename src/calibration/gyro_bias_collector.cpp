@@ -1,6 +1,7 @@
 #include "ExVectrDSP/calibration/gyro_bias_collector.hpp"
 
 #include <math.h>
+#include <stdio.h>
 
 namespace VCTR {
 namespace DSP {
@@ -14,6 +15,8 @@ void GyroBiasCollector::start(int64_t nowNs, int64_t deadlineNs) {
   state_ = State::Collecting;
   deadline_ = deadlineNs;
   restarts_ = 0;
+  bestRun_ = rejected_ = 0;
+  worstViol_ = GyroViolation();
   res_ = GyroBiasResult();
   diag_ = GyroBlockDiagnostics();
   last_ = GyroLastBlock();
@@ -95,14 +98,36 @@ void GyroBiasCollector::closeBlock() {
   } else {
     diag_.shortBlocks++;
   }
-  for (int k = 0; k < 3 && ok; k++) {
-    if (!(block_.gyroStd(k) < cfg_.maxBlockStd) || !(block_.gyroP2P(k) < cfg_.maxBlockP2P))
-      ok = false;
-    if (cfg_.maxAccelAxisStd > 0 && !(block_.accelStd(k) < cfg_.maxAccelAxisStd))
-      ok = false;
-  }
-  if (ok && !(block_.accelNormStd() < cfg_.maxAccelNormStd))
+  // Limit check. Every limit is evaluated (not first-fail) so the worst violation by ratio is recorded.
+  GyroViolation blockViol;
+  const auto check = [&](GyroViolation::Kind kind, int axis, double value, double limit) {
+    if (value < limit)
+      return;
     ok = false;
+    const double ratio = limit > 0 ? value / limit : 1e300;
+    if (ratio > blockViol.ratio || !(ratio == ratio)) {
+      blockViol.kind = kind;
+      blockViol.axis = axis;
+      blockViol.value = value;
+      blockViol.limit = limit;
+      blockViol.ratio = ratio;
+    }
+  };
+  if (block_.nGyro < 2 || block_.nAccel < 2) {
+    ok = false;
+    blockViol.kind = GyroViolation::ShortBlock;
+    blockViol.value = double(block_.nGyro < block_.nAccel ? block_.nGyro : block_.nAccel);
+    blockViol.limit = 2;
+    blockViol.ratio = 1;
+  } else {
+    for (int k = 0; k < 3; k++) {
+      check(GyroViolation::GyroStd, k, block_.gyroStd(k), cfg_.maxBlockStd);
+      check(GyroViolation::GyroP2P, k, block_.gyroP2P(k), cfg_.maxBlockP2P);
+      if (cfg_.maxAccelAxisStd > 0)
+        check(GyroViolation::AccelAxisStd, k, block_.accelStd(k), cfg_.maxAccelAxisStd);
+    }
+    check(GyroViolation::AccelNormStd, -1, block_.accelNormStd(), cfg_.maxAccelNormStd);
+  }
 
   if (block_.nGyro >= 2 && block_.nAccel >= 2) {
     last_.valid = true;
@@ -118,6 +143,9 @@ void GyroBiasCollector::closeBlock() {
 
   if (!ok) {
     restarts_++;
+    rejected_++;
+    if (blockViol.ratio > worstViol_.ratio)
+      worstViol_ = blockViol;
     restartWindow();
     return;
   }
@@ -134,6 +162,8 @@ void GyroBiasCollector::closeBlock() {
     winTN_ += blockTN_;
   }
   windowCollectedNs_ += cfg_.blockNs;
+  if (cfg_.blockNs > 0 && uint32_t(windowCollectedNs_ / cfg_.blockNs) > bestRun_)
+    bestRun_ = uint32_t(windowCollectedNs_ / cfg_.blockNs);
   block_.clear();
   for (int k = 0; k < 3; k++)
     blockMagSum_[k] = 0;
@@ -184,6 +214,9 @@ void GyroBiasCollector::finish(int64_t nowNs, bool complete) {
   state_ = State::Done;
   res_ = GyroBiasResult();
   res_.restarts = restarts_;
+  res_.bestRun = bestRun_;
+  res_.rejectedBlocks = rejected_;
+  res_.worstViolation = worstViol_;
   res_.worst = diag_;
   if (!complete) {
     res_.result = restarts_ > 0 ? CalResult::Motion : CalResult::Timeout;
@@ -222,6 +255,35 @@ void GyroBiasCollector::finish(int64_t nowNs, bool complete) {
     res_.result = CalResult::FailResidual;
   else
     res_.result = CalResult::Pass;
+}
+
+int describeGyroRun(const GyroBiasResult &r, const GyroBiasConfig &cfg, char *buf, size_t n) {
+  const uint32_t need = cfg.blockNs > 0 ? uint32_t(cfg.windowNs / cfg.blockNs) : 0;
+  const GyroViolation &v = r.worstViolation;
+  char head[64];
+  snprintf(head, sizeof head, "best %lu of %lu blocks, %lu rejected", (unsigned long)r.bestRun, (unsigned long)need,
+           (unsigned long)r.rejectedBlocks);
+  if (v.kind == GyroViolation::None)
+    return snprintf(buf, n, "%s", head);
+  static const char *const axisName = "XYZ";
+  char axis[4] = {0, 0, 0, 0};
+  if (v.axis >= 0 && v.axis < 3) {
+    axis[0] = ' ';
+    axis[1] = axisName[v.axis];
+  }
+  const double dg = 180.0 / 3.14159265358979;
+  switch (v.kind) {
+  case GyroViolation::GyroStd:
+    return snprintf(buf, n, "%s, worst: gyro std%s %.2f deg/s > limit %.2f deg/s", head, axis, v.value * dg, v.limit * dg);
+  case GyroViolation::GyroP2P:
+    return snprintf(buf, n, "%s, worst: gyro p2p%s %.2f deg/s > limit %.2f deg/s", head, axis, v.value * dg, v.limit * dg);
+  case GyroViolation::AccelAxisStd:
+    return snprintf(buf, n, "%s, worst: accel std%s %.3f m/s^2 > limit %.3f m/s^2", head, axis, v.value, v.limit);
+  case GyroViolation::AccelNormStd:
+    return snprintf(buf, n, "%s, worst: |a| std %.3f m/s^2 > limit %.3f m/s^2", head, v.value, v.limit);
+  default:
+    return snprintf(buf, n, "%s, worst: block with only %.0f gyro/accel samples (need 2)", head, v.value);
+  }
 }
 
 bool GyroBiasCollector::poll(int64_t nowNs) {
