@@ -83,60 +83,47 @@ void normalEquations(const double *p, size_t np, const double (*poses)[3], size_
 
 } // namespace
 
-uint8_t accelCoverageMask(const double (*poses)[3], size_t n, double coverageAngleRad) {
-  const double cosLim = cos(coverageAngleRad);
-  uint8_t mask = 0; // +x, -x, +y, -y, +z, -z
-  for (size_t i = 0; i < n; i++) {
-    const double nrm = sqrt(poses[i][0] * poses[i][0] + poses[i][1] * poses[i][1] + poses[i][2] * poses[i][2]);
-    if (!(nrm > 1e-9))
-      continue;
-    for (int k = 0; k < 3; k++) {
-      const double c = poses[i][k] / nrm;
-      if (c >= cosLim)
-        mask |= static_cast<uint8_t>(1u << (2 * k));
-      if (-c >= cosLim)
-        mask |= static_cast<uint8_t>(1u << (2 * k + 1));
-    }
+const char *accelParamName(int idx) {
+  static const char *const names[9] = {"offset X", "offset Y", "offset Z", "scale XX", "scale YY",
+                                       "scale ZZ",  "skew XY",  "skew XZ",  "skew YZ"};
+  return (idx >= 0 && idx < 9) ? names[idx] : "?";
+}
+
+double accelParamLimit(int idx, const AccelFitConfig &cfg) { return idx < 3 ? cfg.maxOffsetSigma : cfg.maxScaleSigma; }
+
+const char *accelParamAdvice(int idx) {
+  static const char *const adv[9] = {"gravity along X (+X and -X)",   "gravity along Y (+Y and -Y)",
+                                     "gravity along Z (+Z and -Z)",   "gravity along X (+X and -X)",
+                                     "gravity along Y (+Y and -Y)",   "gravity along Z (+Z and -Z)",
+                                     "gravity at 45 deg between X and Y", "gravity at 45 deg between X and Z",
+                                     "gravity at 45 deg between Y and Z"};
+  return (idx >= 0 && idx < 9) ? adv[idx] : "";
+}
+
+size_t accelWeakParams(const AccelFitResult &r, const AccelFitConfig &cfg, AccelWeakParam *out, size_t max) {
+  if (!r.sigmaValid || max == 0)
+    return 0;
+  const size_t np = r.diagonal ? 6 : 9;
+  AccelWeakParam all[9];
+  for (size_t i = 0; i < np; i++) {
+    all[i].idx = int(i);
+    all[i].sigma = r.sigma[i];
+    all[i].limit = accelParamLimit(int(i), cfg);
   }
-  return mask;
-}
-
-bool accelPoseCoverage(const double (*poses)[3], size_t n, double coverageAngleRad) {
-  return accelCoverageMask(poses, n, coverageAngleRad) == 0x3F;
-}
-
-int accelCoverageCount(uint8_t mask) {
-  int c = 0;
-  for (int k = 0; k < 6; k++)
-    if (mask & (1u << k))
-      c++;
-  return c;
-}
-
-void accelMissingText(uint8_t mask, char *buf, size_t bufLen) {
-  if (bufLen == 0)
-    return;
-  static const char *const names[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
-  size_t pos = 0;
-  buf[0] = 0;
-  for (int k = 0; k < 6; k++) {
-    if (mask & (1u << k))
-      continue;
-    const size_t need = (pos ? 2 : 0) + 2;
-    if (pos + need + 1 > bufLen)
-      break;
-    if (pos) {
-      buf[pos++] = ',';
-      buf[pos++] = ' ';
+  // insertion sort by sigma / limit, descending
+  for (size_t i = 1; i < np; i++)
+    for (size_t k = i; k > 0 && all[k].sigma / all[k].limit > all[k - 1].sigma / all[k - 1].limit; k--) {
+      const AccelWeakParam t = all[k];
+      all[k] = all[k - 1];
+      all[k - 1] = t;
     }
-    buf[pos++] = names[k][0];
-    buf[pos++] = names[k][1];
-    buf[pos] = 0;
-  }
-}
-
-bool accelCoverageComplete(size_t nPoses, uint8_t mask, size_t minPoses) {
-  return nPoses >= minPoses && (mask & 0x3F) == 0x3F;
+  size_t cnt = 0;
+  for (size_t i = 0; i < np && cnt < max; i++)
+    if (all[i].sigma >= all[i].limit)
+      out[cnt++] = all[i];
+  if (cnt == 0)
+    out[cnt++] = all[0];
+  return cnt;
 }
 
 double accelCalibratedNorm(const AccelFitResult &r, const double x[3]) {
@@ -153,9 +140,6 @@ AccelFitResult fitAccel(const double (*poses)[3], size_t n, const AccelFitConfig
 
   if (n >= cfg.minPosesFull)
     res.checks |= kAccelCheckPosesFull;
-  const bool coverage = accelPoseCoverage(poses, n, cfg.coverageAngleRad);
-  if (coverage)
-    res.checks |= kAccelCheckCoverage;
 
   for (size_t i = 0; i < n; i++) {
     if (!isfinite(poses[i][0]) || !isfinite(poses[i][1]) || !isfinite(poses[i][2])) {
@@ -259,6 +243,36 @@ AccelFitResult fitAccel(const double (*poses)[3], size_t n, const AccelFitConfig
   if (res.residualMax < cfg.maxResidualMax)
     res.checks |= kAccelCheckResidualMax;
 
+  // Parameter standard errors: cov = sigma^2 (J^T J)^-1 in normalised units, offsets back to m/s^2.
+  {
+    const double sig = (res.residualRms > cfg.noiseFloor ? res.residualRms : cfg.noiseFloor) / g;
+    bool ok = solved;
+    double col[kMaxParams], M[kMaxParams * kMaxParams], var[kMaxParams];
+    for (size_t k = 0; k < np && ok; k++) {
+      for (size_t a = 0; a < np * np; a++)
+        M[a] = JtJ[a];
+      for (size_t a = 0; a < np; a++)
+        col[a] = (a == k) ? 1.0 : 0.0;
+      if (!solveLinear(M, col, np) || !(col[k] > 0) || !isfinite(col[k]))
+        ok = false;
+      else
+        var[k] = col[k];
+    }
+    res.sigmaValid = ok;
+    if (ok) {
+      bool well = true;
+      for (size_t k = 0; k < np; k++) {
+        const double sd = sig * sqrt(var[k]);
+        res.sigma[k] = k < 3 ? sd * g : sd;
+        if (!(res.sigma[k] < accelParamLimit(int(k), cfg)))
+          well = false;
+      }
+      res.wellDetermined = well;
+    }
+    if (res.wellDetermined)
+      res.checks |= kAccelCheckCoverage;
+  }
+
   bool eigOk = symmetricEigenvalues(res.A, 3, res.scaleEig);
   if (eigOk && res.scaleEig[0] >= cfg.scaleMin && res.scaleEig[2] <= cfg.scaleMax)
     res.checks |= kAccelCheckScale;
@@ -276,12 +290,14 @@ AccelFitResult fitAccel(const double (*poses)[3], size_t n, const AccelFitConfig
   if (offNominal)
     res.checks |= kAccelCheckOffsetNominal;
 
-  if (!coverage)
-    res.result = CalResult::FailCoverage;
-  else if (!solved || !(res.checks & kAccelCheckCondition))
-    res.result = CalResult::Numeric;
+  if (!solved || !res.sigmaValid)
+    res.result = CalResult::Numeric; // not solvable, or singular normal matrix (a parameter is not constrained at all)
   else if (!(res.checks & kAccelCheckResidualRms) || !(res.checks & kAccelCheckResidualMax))
-    res.result = CalResult::FailResidual;
+    res.result = CalResult::FailResidual; // before the distribution: a bad pose also inflates the standard errors
+  else if (!res.wellDetermined)
+    res.result = CalResult::FailCoverage;
+  else if (!(res.checks & kAccelCheckCondition))
+    res.result = CalResult::Numeric;
   else if (!(res.checks & kAccelCheckScale) || !(res.checks & kAccelCheckOffDiag) || !(res.checks & kAccelCheckOffset))
     res.result = CalResult::FailRange;
   else if (res.diagonal || !offNominal)

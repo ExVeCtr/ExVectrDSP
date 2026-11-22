@@ -13,6 +13,13 @@
  * With fewer than minPosesFull (9) but at least minPosesDiag (6) poses, a diagonal fit (b + diag(A), 6 parameters)
  * is used and the result is at best Warn.
  *
+ * Acceptance of the pose distribution is decided from the fit result, not from where the poses were: the covariance
+ * of the parameters, cov = sigma^2 (J^T J)^-1 (Gauss-Newton Jacobian at the solution, sigma = max(residual rms,
+ * noiseFloor)), must give every offset standard error < maxOffsetSigma and every scale/skew standard error <
+ * maxScaleSigma. Orientation relative to the sensor axes does not matter (a pose at 45 deg between two axes is as
+ * good as one along an axis); only the spread of the poses does. fitAccel is also the operator-hint function of the
+ * vehicle (the same result gives the check and the "weakest parameter" text).
+ *
  * Internally the fit runs in units of g (x / g), so the condition number of the normal matrix compares offset and
  * scale columns of equal size.
  *
@@ -36,7 +43,10 @@ struct AccelFitConfig {
   double gRef = 9.81;              ///< gravity reference, m/s^2 (CAL_G_REF)
   size_t minPosesFull = 9;         ///< poses for the full 9-parameter fit
   size_t minPosesDiag = 6;         ///< poses for the diagonal fallback
-  double coverageAngleRad = 25.0 * 3.14159265358979 / 180.0; ///< each sensor axis within this of +g and -g once
+  double maxOffsetSigma = 0.05;    ///< standard error limit of each offset b_k, m/s^2
+  double maxScaleSigma = 0.005;    ///< standard error limit of each scale / skew entry of A (dimensionless)
+  double noiseFloor = 0.005;       ///< m/s^2: lower bound of sigma (2 s pose averages have about this noise; with n close
+                                   ///< to the parameter count the residual rms alone would be near zero)
   double maxResidualRms = 0.03;    ///< m/s^2
   double maxResidualMax = 0.06;    ///< m/s^2
   double scaleMin = 0.95;          ///< eigenvalues of A
@@ -51,7 +61,7 @@ struct AccelFitConfig {
 /// Pass bits of AccelFitResult::checks (bit set = check passed).
 enum AccelCheck : uint16_t {
   kAccelCheckPosesFull = 1u << 0, ///< n >= minPosesFull (full fit, not the diagonal fallback)
-  kAccelCheckCoverage = 1u << 1,  ///< every sensor axis within coverageAngle of +g and of -g at least once
+  kAccelCheckCoverage = 1u << 1,  ///< every parameter well determined: offset sigma < maxOffsetSigma, scale sigma < maxScaleSigma
   kAccelCheckSolved = 1u << 2,    ///< the iteration produced finite parameters
   kAccelCheckCondition = 1u << 3, ///< condition number < maxCondition
   kAccelCheckResidualRms = 1u << 4,
@@ -74,36 +84,43 @@ struct AccelFitResult {
   double residualMax = 0;  ///< max | |a_cal| - g |, m/s^2
   double condition = 0;    ///< of the normalised normal matrix (inf if singular)
   int iterations = 0;
+  /// Standard errors of the parameters (valid if sigmaValid): [0..2] offsets b_x,b_y,b_z in m/s^2; [3..5] A_xx, A_yy,
+  /// A_zz; [6..8] A_xy, A_xz, A_yz (dimensionless; the three skew entries are 0 and unchecked in the diagonal fit).
+  double sigma[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+  bool sigmaValid = false;      ///< the normal matrix was invertible (false: poses do not constrain all parameters)
+  bool wellDetermined = false;  ///< sigmaValid and every sigma within its limit (= kAccelCheckCoverage)
+};
+
+/// Parameter names in AccelFitResult::sigma order.
+const char *accelParamName(int idx);
+/// Standard error limit of parameter idx.
+double accelParamLimit(int idx, const AccelFitConfig &cfg);
+
+struct AccelWeakParam {
+  int idx;        ///< index into AccelFitResult::sigma
+  double sigma;
+  double limit;
 };
 
 /**
+ * The parameters that are worst determined, ordered by sigma / limit, at most max entries (max <= 9). If some exceed
+ * their limit only those are listed, otherwise the single worst one. Returns the count (0 if sigma is not valid).
+ */
+size_t accelWeakParams(const AccelFitResult &r, const AccelFitConfig &cfg, AccelWeakParam *out, size_t max);
+
+/// Advice for a parameter, e.g. "gravity along Y (+Y and -Y)" or "gravity at 45 deg between X and Y".
+const char *accelParamAdvice(int idx);
+
+/**
  * Fits b and A to n pose means (raw sensor frame, m/s^2). n may be any number; the verdict covers too few poses.
- * Verdict order: too few poses / coverage -> FailCoverage; not solvable or condition -> Numeric; residuals ->
- * FailResidual; scale, off-diagonal, offset -> FailRange; else Warn (diagonal fallback or offset above warnOffset)
+ * Verdict order: too few poses -> FailCoverage; not solvable or singular -> Numeric; residuals -> FailResidual; parameters not well
+ * determined -> FailCoverage; condition -> Numeric; scale, off-diagonal, offset -> FailRange; else Warn (diagonal fallback or offset above warnOffset)
  * or Pass.
  */
 AccelFitResult fitAccel(const double (*poses)[3], size_t n, const AccelFitConfig &cfg = AccelFitConfig());
 
 /// |A (x - b)| with the parameters of r.
 double accelCalibratedNorm(const AccelFitResult &r, const double x[3]);
-
-/// Bit k set = direction k covered by at least one pose within coverageAngleRad of it. Directions in the sensor frame
-/// as the fit sees it (raw pose means): bit 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z (the axis pointing along +g
-/// reading, i.e. the axis the specific force points to). 0x3F = all covered.
-uint8_t accelCoverageMask(const double (*poses)[3], size_t n, double coverageAngleRad);
-
-/// True if every sensor axis lies within coverageAngleRad of +g and of -g for at least one pose direction
-/// (accelCoverageMask == 0x3F).
-bool accelPoseCoverage(const double (*poses)[3], size_t n, double coverageAngleRad);
-
-/// Number of covered directions (0..6) in a mask.
-int accelCoverageCount(uint8_t mask);
-
-/// Writes the missing directions of a mask as "+X, -Z" (bit order) into buf (empty string if none missing).
-void accelMissingText(uint8_t mask, char *buf, size_t bufLen);
-
-/// True when the operator can stop and fit: at least minPoses poses and all six directions covered.
-bool accelCoverageComplete(size_t nPoses, uint8_t mask, size_t minPoses);
 
 } // namespace Calib
 } // namespace DSP
