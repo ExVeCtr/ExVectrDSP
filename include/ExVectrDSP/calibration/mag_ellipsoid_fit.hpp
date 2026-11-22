@@ -57,8 +57,9 @@ struct MagEllipsoidConfig {
   double minCoverage = 0.75;     ///< fraction of the 64 bins with at least minBinCount stored samples
   uint8_t minBinCount = 2;
   size_t minStored = 300;        ///< stored (direction-thinned) samples
-  double maxResidualRms = 0.015; ///< of |B_cal| / rRef - 1, inliers (1.5 %)
-  double maxResidualMax = 0.05;  ///< inliers (5 %)
+  double maxResidualRms = 0.035; ///< of |B_cal| / rRef - 1, inliers (3.5 %): above this FailResidual
+  double warnResidualRms = 0.015; ///< rms between this (1.5 %) and maxResidualRms: Warn (field noise or disturbance)
+  double maxResidualMax = 0.10;  ///< inliers (10 %)
   double maxOffsetRatio = 0.8;   ///< |b| < ratio * R
   double maxAxisRatio = kMagAxisRatioMax;
   double eigMinRel = kMagEigMinRel;
@@ -86,6 +87,7 @@ enum MagCheck : uint16_t {
   kMagCheckSoftIron = 1u << 7,       ///< eigenvalues of A and axis ratio plausible (verdict FAIL_RANGE when not)
   kMagCheckRejected = 1u << 8,       ///< rejected fraction <= maxRejectedFraction
   kMagCheckRejectedNominal = 1u << 9, ///< rejected fraction <= warnRejectedFraction (warning only)
+  kMagCheckResidualNominal = 1u << 10, ///< residual rms < warnResidualRms (warning only)
 };
 
 struct MagEllipsoidResult {

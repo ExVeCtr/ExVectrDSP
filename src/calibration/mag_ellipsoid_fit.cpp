@@ -2,6 +2,7 @@
 #include "ExVectrDSP/calibration/cal_linalg.hpp"
 
 #include <math.h>
+#include <stdio.h>
 
 namespace VCTR {
 namespace DSP {
@@ -110,6 +111,11 @@ const char *magFailReason(const MagEllipsoidResult &r) {
     return "soft-iron distortion too large (axis ratio or eigenvalues out of range)";
   if (!(c & kMagCheckOffset))
     return "hard-iron offset too large";
+  if (!(c & kMagCheckResidualNominal)) {
+    static char buf[64]; // single-threaded operator log
+    snprintf(buf, sizeof(buf), "field noise or disturbance during the tumble (rms %.1f %%)", r.residualRms * 100.0);
+    return buf;
+  }
   if (!(c & kMagCheckRejectedNominal))
     return "some disturbed samples were rejected";
   return "all checks passed";
@@ -482,6 +488,8 @@ MagEllipsoidResult MagEllipsoidFit::evaluate() {
       res.checks |= kMagCheckResidualRms;
     if (res.residualMax < cfg_.maxResidualMax)
       res.checks |= kMagCheckResidualMax;
+    if (res.residualRms < cfg_.warnResidualRms)
+      res.checks |= kMagCheckResidualNominal;
   }
   const double rejFrac = nStored_ > 0 ? double(res.nRejected) / double(nStored_) : 0;
   if (rejFrac <= cfg_.maxRejectedFraction)
@@ -556,7 +564,7 @@ MagEllipsoidResult MagEllipsoidFit::evaluate() {
     res.result = CalResult::FailCoverage;
   else if (!(res.checks & kMagCheckSoftIron) || !(res.checks & kMagCheckOffset))
     res.result = CalResult::FailRange;
-  else if (!(res.checks & kMagCheckRejectedNominal))
+  else if (!(res.checks & kMagCheckRejectedNominal) || !(res.checks & kMagCheckResidualNominal))
     res.result = CalResult::Warn;
   else
     res.result = CalResult::Pass;
